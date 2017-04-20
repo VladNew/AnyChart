@@ -1,9 +1,10 @@
 goog.provide('anychart.core.resource.Activities');
+
 goog.require('anychart.core.Base');
 goog.require('anychart.core.settings');
 goog.require('anychart.core.ui.LabelsFactory');
-goog.require('anychart.core.utils.GenericContextProvider');
 goog.require('anychart.enums');
+goog.require('anychart.format.Context');
 
 
 
@@ -56,6 +57,12 @@ anychart.core.resource.Activities = function(chart) {
    * @private
    */
   this.hatchFillResolver_ = null;
+
+  /**
+   * @type {anychart.format.Context}
+   * @private
+   */
+  this.formatProvider_ = null;
 };
 goog.inherits(anychart.core.resource.Activities, anychart.core.Base);
 
@@ -192,25 +199,21 @@ anychart.core.resource.Activities.prototype.labelsInvalidated_ = function(event)
  * @return {Object}
  */
 anychart.core.resource.Activities.prototype.createFormatProvider = function(interval, dataObj) {
-  return new anychart.core.utils.GenericContextProvider({
-    'start': interval.start,
-    'end': interval.end,
-    'minutesPerDay': interval.minutesPerDay,
-    'hoursPerDay': interval.minutesPerDay / 60,
-    'hoursPerDayRounded': Math.ceil(interval.minutesPerDay / 30) / 2,
-    'name': dataObj['name'] || 'Unnamed Activity',
-    'activityName': dataObj['name'],
-    'activityInfo': dataObj
-  }, {
-    'start': anychart.enums.TokenType.DATE_TIME,
-    'end': anychart.enums.TokenType.DATE_TIME,
-    'minutesPerDay': anychart.enums.TokenType.NUMBER,
-    'hoursPerDay': anychart.enums.TokenType.NUMBER,
-    'hoursPerDayRounded': anychart.enums.TokenType.NUMBER,
-    'name': anychart.enums.TokenType.STRING,
-    'activityName': anychart.enums.TokenType.STRING,
-    'activityInfo': anychart.enums.TokenType.UNKNOWN
-  });
+  if (!this.formatProvider_)
+    this.formatProvider_ = new anychart.format.Context();
+
+  var values = {
+    'start': {value: interval.start, type: anychart.enums.TokenType.DATE_TIME},
+    'end': {value: interval.end, type: anychart.enums.TokenType.DATE_TIME},
+    'minutesPerDay': {value: interval.minutesPerDay, type: anychart.enums.TokenType.NUMBER},
+    'hoursPerDay': {value: interval.minutesPerDay / 60, type: anychart.enums.TokenType.NUMBER},
+    'hoursPerDayRounded': {value: Math.ceil(interval.minutesPerDay / 30) / 2, type: anychart.enums.TokenType.NUMBER},
+    'name': {value: dataObj['name'] || 'Unnamed Activity', type: anychart.enums.TokenType.STRING},
+    'activityName': {value: dataObj['name'], type: anychart.enums.TokenType.STRING},
+    'activityInfo': {value: dataObj, type: anychart.enums.TokenType.UNKNOWN}
+  };
+
+  return this.formatProvider_.propagate(values);
 };
 
 
@@ -239,7 +242,7 @@ anychart.core.resource.Activities.prototype.drawLabel = function(index, state, f
           null));
 
   var isDraw = goog.isNull(statePointOverrideEnabled) ? // has no state marker or null "enabled" in it ?
-      (!stateFactory || goog.isNull(stateFactory.enabled())) ? // has no state stateFactory or null "enabled" in it ?
+      (!stateFactory || goog.isNull(stateFactory.enabled()) || !goog.isDef(stateFactory.enabled())) ? // has no state stateFactory or null "enabled" in it ?
           goog.isNull(pointOverrideEnabled) ? // has no marker in point or null "enabled" in it ?
               mainFactory.enabled() :
               pointOverrideEnabled :
@@ -248,9 +251,9 @@ anychart.core.resource.Activities.prototype.drawLabel = function(index, state, f
 
   if (isDraw) {
     var position = (statePointOverride && statePointOverride['position']) ||
-        (stateFactory && stateFactory.position()) ||
+        (stateFactory && stateFactory.getOption('position')) ||
         (pointOverride && pointOverride['position']) ||
-        mainFactory.position();
+        mainFactory.getOption('position');
     var positionProvider = {'value': anychart.utils.getCoordinateByAnchor(bounds, position)};
 
     var element = mainFactory.getLabel(/** @type {number} */(index));
@@ -261,11 +264,11 @@ anychart.core.resource.Activities.prototype.drawLabel = function(index, state, f
       element = mainFactory.add(formatProvider, positionProvider, index);
     }
     element.resetSettings();
-    element.currentLabelsFactory(stateFactory || mainFactory);
+    element.currentLabelsFactory(stateFactory);
     element.setSettings(pointOverride, statePointOverride);
-    element.width(bounds.width);
-    element.height(bounds.height);
-    element.clip(bounds);
+    element['width'](bounds.width);
+    element['height'](bounds.height);
+    element['clip'](bounds);
     element.draw();
   } else {
     mainFactory.clear(index);
@@ -692,7 +695,7 @@ anychart.core.resource.Activities.prototype.serialize = function() {
 anychart.core.resource.Activities.prototype.setupByJSON = function(config, opt_default) {
   anychart.core.resource.Activities.base(this, 'setupByJSON', config);
   anychart.core.settings.deserialize(this, anychart.core.resource.Activities.DESCRIPTORS, config);
-  this.labels().setup(config['labels']);
+  this.labels().setupByVal(config['labels'], opt_default);
 };
 
 

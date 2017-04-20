@@ -57,18 +57,25 @@ anychart.core.drawers.Area.prototype.requiredShapes = (function() {
 })();
 
 
+//region --- Internal drawing variants
+//------------------------------------------------------------------------------
+//
+//  Internal drawing variants
+//
+//------------------------------------------------------------------------------
 /**
  * Draws area start.
  * @param {Object.<string, acgraph.vector.Shape>} shapes
  * @param {number} x
  * @param {number} y
+ * @param {number} zeroX
  * @param {number} zero
  * @private
  */
-anychart.core.drawers.Area.prototype.drawSegmentStart_ = function(shapes, x, y, zero) {
-  anychart.core.drawers.move(/** @type {acgraph.vector.Path} */(shapes['fill']), this.isVertical, x, zero);
+anychart.core.drawers.Area.prototype.drawSegmentStart_ = function(shapes, x, y, zeroX, zero) {
+  anychart.core.drawers.move(/** @type {acgraph.vector.Path} */(shapes['fill']), this.isVertical, zeroX, zero);
   anychart.core.drawers.line(/** @type {acgraph.vector.Path} */(shapes['fill']), this.isVertical, x, y);
-  anychart.core.drawers.move(/** @type {acgraph.vector.Path} */(shapes['hatchFill']), this.isVertical, x, zero);
+  anychart.core.drawers.move(/** @type {acgraph.vector.Path} */(shapes['hatchFill']), this.isVertical, zeroX, zero);
   anychart.core.drawers.line(/** @type {acgraph.vector.Path} */(shapes['hatchFill']), this.isVertical, x, y);
   anychart.core.drawers.move(/** @type {acgraph.vector.Path} */(shapes['stroke']), this.isVertical, x, y);
 };
@@ -88,65 +95,191 @@ anychart.core.drawers.Area.prototype.drawSegmentContinuation_ = function(shapes,
 };
 
 
+/**
+ * Draws the first point in segment assuming that the zero line is also a complex line.
+ * @param {anychart.data.IRowInfo} point
+ * @param {number} x
+ * @param {number} y
+ * @param {number} zeroX
+ * @param {number} zeroY
+ * @private
+ */
+anychart.core.drawers.Area.prototype.drawFirstPointMultiZero_ = function(point, x, y, zeroX, zeroY) {
+  var shapes = this.shapesManager.getShapesGroup(this.seriesState);
+  var nextZeroX = /** @type {number} */(point.meta('nextZeroX'));
+  var nextZero = /** @type {number} */(point.meta('nextZero'));
+  var nextX = /** @type {number} */(point.meta('nextValueX'));
+  var nextY = /** @type {number} */(point.meta('nextValue'));
+  if (!isNaN(nextZero) && !isNaN(nextY)) {
+    var shape = /** @type {acgraph.vector.Path} */(shapes['stroke']);
+    anychart.core.drawers.move(shape, this.isVertical, x, y);
+    anychart.core.drawers.line(shape, this.isVertical, x, y);
+    this.drawSegmentStart_(shapes, nextX, nextY, nextZeroX, nextZero);
+    this.zeroesStack = [nextZeroX, nextZero];
+  } else {
+    this.drawSegmentStart_(shapes, x, y, zeroX, zeroY);
+    this.zeroesStack = [zeroX, zeroY];
+  }
+};
+
+
+/**
+ * Draws the first point in segment assuming that the zero line is a simple straight line or single point.
+ * @param {anychart.data.IRowInfo} point
+ * @param {number} x
+ * @param {number} y
+ * @param {number} zeroX
+ * @param {number} zeroY
+ * @private
+ */
+anychart.core.drawers.Area.prototype.drawFirstPointSingleZero_ = function(point, x, y, zeroX, zeroY) {
+  var shapes = this.shapesManager.getShapesGroup(this.seriesState);
+  this.drawSegmentStart_(shapes, x, y, zeroX, zeroY);
+  /** @type {number} */
+  this.lastDrawnX = x;
+  /** @type {number} */
+  this.zeroY = zeroY;
+};
+
+
+/**
+ * Draws the first point in segment assuming that the zero line is also a complex line.
+ * @param {anychart.data.IRowInfo} point
+ * @param {number} x
+ * @param {number} y
+ * @param {number} zeroX
+ * @param {number} zeroY
+ * @private
+ */
+anychart.core.drawers.Area.prototype.drawSubsequentPointMultiZero_ = function(point, x, y, zeroX, zeroY) {
+  var shapes = this.shapesManager.getShapesGroup(this.seriesState);
+  var prevZeroX = /** @type {number} */(point.meta('prevZeroX'));
+  var prevZero = /** @type {number} */(point.meta('prevZero'));
+  var prevX = /** @type {number} */(point.meta('prevValueX'));
+  var prevY = /** @type {number} */(point.meta('prevValue'));
+  if (!isNaN(prevZero) && !isNaN(prevY)) {
+    this.drawSegmentContinuation_(shapes, prevX, prevY);
+    this.zeroesStack.push(prevZeroX, prevZero);
+    this.finalizeSegment();
+    this.drawSegmentStart_(shapes, x, y, zeroX, zeroY);
+    this.zeroesStack = [zeroX, zeroY];
+  }
+  this.drawSegmentContinuation_(shapes, x, y);
+  this.zeroesStack.push(zeroX, zeroY);
+  var nextZeroX = /** @type {number} */(point.meta('nextZeroX'));
+  var nextZero = /** @type {number} */(point.meta('nextZero'));
+  var nextX = /** @type {number} */(point.meta('nextValueX'));
+  var nextY = /** @type {number} */(point.meta('nextValue'));
+  if (!isNaN(nextZero) && !isNaN(nextY)) {
+    this.finalizeSegment();
+    this.drawSegmentStart_(shapes, nextX, nextY, nextZeroX, nextZero);
+    this.zeroesStack = [nextZeroX, nextZero];
+  }
+};
+
+
+/**
+ * Draws the first point in segment assuming that the zero line is a simple straight line or single point.
+ * @param {anychart.data.IRowInfo} point
+ * @param {number} x
+ * @param {number} y
+ * @param {number} zeroX
+ * @param {number} zeroY
+ * @private
+ */
+anychart.core.drawers.Area.prototype.drawSubsequentPointSingleZero_ = function(point, x, y, zeroX, zeroY) {
+  var shapes = this.shapesManager.getShapesGroup(this.seriesState);
+  this.drawSegmentContinuation_(shapes, x, y);
+  this.lastDrawnX = zeroX;
+};
+//endregion
+
+
+/** @inheritDoc */
+anychart.core.drawers.Area.prototype.startDrawing = function(shapeManager) {
+  anychart.core.drawers.Area.base(this, 'startDrawing', shapeManager);
+
+  /**
+   * If the line should be closed to its first point.
+   * @type {boolean}
+   * @private
+   */
+  this.closed_ = !!this.series.getOption('closed');
+  /**
+   * If the first point is missing (for the closed mode).
+   * @type {boolean}
+   * @private
+   */
+  this.firstPointMissing_ = false;
+  /**
+   * First non-missing point X coord (for the closed mode).
+   * @type {number}
+   * @private
+   */
+  this.firstPointX_ = NaN;
+  /**
+   * First non-missing point Y coord (for the closed mode).
+   * @type {number}
+   * @private
+   */
+  this.firstPointY_ = NaN;
+  /**
+   * First non-missing point Zero X coord (for the closed mode).
+   * @type {number}
+   * @private
+   */
+  this.firstPointZeroX_ = NaN;
+  /**
+   * First non-missing point Zero coord (for the closed mode).
+   * @type {number}
+   * @private
+   */
+  this.firstPointZero_ = NaN;
+
+  if (this.series.hasComplexZero()) {
+    this.drawFirstPoint_ = this.drawFirstPointMultiZero_;
+    this.drawSubsequentPoint_ = this.drawSubsequentPointMultiZero_;
+  } else {
+    this.drawFirstPoint_ = this.drawFirstPointSingleZero_;
+    this.drawSubsequentPoint_ = this.drawSubsequentPointSingleZero_;
+  }
+};
+
+
+/** @inheritDoc */
+anychart.core.drawers.Area.prototype.drawMissingPoint = function(point, state) {
+  if (isNaN(this.firstPointX_))
+    this.firstPointMissing_ = true;
+  anychart.core.drawers.Area.base(this, 'drawMissingPoint', point, state);
+};
+
+
 /** @inheritDoc */
 anychart.core.drawers.Area.prototype.drawFirstPoint = function(point, state) {
-  var shapes = this.shapesManager.getShapesGroup(this.seriesState);
   var x = /** @type {number} */(point.meta('x'));
-  var zero = /** @type {number} */(point.meta('zero'));
   var y = /** @type {number} */(point.meta('value'));
+  var zeroX = /** @type {number} */(point.meta('zeroX'));
+  var zero = /** @type {number} */(point.meta('zero'));
 
+  this.drawFirstPoint_(point, x, y, zeroX, zero);
 
-  if (this.series.planIsStacked()) {
-    var nextZero = /** @type {number} */(point.meta('nextZero'));
-    var nextY = /** @type {number} */(point.meta('nextValue'));
-    if (!isNaN(nextZero) && !isNaN(nextY)) {
-      shapes['stroke'].moveTo(x, y).lineTo(x, y);
-      this.drawSegmentStart_(shapes, x, nextY, nextZero);
-      this.zeroesStack = [x, nextZero];
-    } else {
-      this.drawSegmentStart_(shapes, x, y, zero);
-      this.zeroesStack = [x, zero];
-    }
-  } else {
-    this.drawSegmentStart_(shapes, x, y, zero);
-    /** @type {number} */
-    this.lastDrawnX = x;
-    /** @type {number} */
-    this.zeroY = zero;
+  if (isNaN(this.firstPointX_)) {
+    this.firstPointX_ = x;
+    this.firstPointY_ = y;
+    this.firstPointZeroX_ = zeroX;
+    this.firstPointZero_ = zero;
   }
 };
 
 
 /** @inheritDoc */
 anychart.core.drawers.Area.prototype.drawSubsequentPoint = function(point, state) {
-  var shapes = this.shapesManager.getShapesGroup(this.seriesState);
   var x = /** @type {number} */(point.meta('x'));
-  var zero = /** @type {number} */(point.meta('zero'));
   var y = /** @type {number} */(point.meta('value'));
+  var zeroX = /** @type {number} */(point.meta('zeroX'));
+  var zero = /** @type {number} */(point.meta('zero'));
 
-  if (this.series.planIsStacked()) {
-    var prevZero = /** @type {number} */(point.meta('prevZero'));
-    var prevY = /** @type {number} */(point.meta('prevValue'));
-    var nextZero = /** @type {number} */(point.meta('nextZero'));
-    var nextY = /** @type {number} */(point.meta('nextValue'));
-    if (!isNaN(prevZero) && !isNaN(prevY)) {
-      this.drawSegmentContinuation_(shapes, x, prevY);
-      this.zeroesStack.push(x, prevZero);
-      this.finalizeSegment();
-      this.drawSegmentStart_(shapes, x, y, zero);
-      this.zeroesStack = [x, zero];
-    }
-    this.drawSegmentContinuation_(shapes, x, y);
-    this.zeroesStack.push(x, zero);
-    if (!isNaN(nextZero) && !isNaN(nextY)) {
-      this.finalizeSegment();
-      this.drawSegmentStart_(shapes, x, nextY, nextZero);
-      this.zeroesStack = [x, nextZero];
-    }
-  } else {
-    this.drawSegmentContinuation_(shapes, x, y);
-    this.lastDrawnX = x;
-  }
+  this.drawSubsequentPoint_(point, x, y, zeroX, zero);
 };
 
 
@@ -174,4 +307,18 @@ anychart.core.drawers.Area.prototype.finalizeSegment = function() {
     path.close();
     hatchPath.close();
   }
+};
+
+
+/** @inheritDoc */
+anychart.core.drawers.Area.prototype.finalizeDrawing = function() {
+  if (this.closed_ && !isNaN(this.firstPointX_) && (this.connectMissing || this.prevPointDrawn && !this.firstPointMissing_)) {
+    var shapes = this.shapesManager.getShapesGroup(this.seriesState);
+    this.drawSegmentContinuation_(shapes, this.firstPointX_, this.firstPointY_);
+    if (this.series.planIsStacked())
+      this.zeroesStack.push(this.firstPointZeroX_, this.firstPointZero_);
+    else
+      this.lastDrawnX = this.firstPointZeroX_;
+  }
+  anychart.core.drawers.Area.base(this, 'finalizeDrawing');
 };

@@ -53,6 +53,14 @@ acgraph.vector.Stage.prototype.allowCreditsDisabling = false;
 
 
 /**
+ * Tooltip container layer.
+ * @type {acgraph.vector.Layer}
+ * @private
+ */
+acgraph.vector.Stage.prototype.tooltipLayer_ = null;
+
+
+/**
  * Stage credits.
  * @param {(Object|boolean|null)=} opt_value .
  * @return {!(acgraph.vector.Stage|anychart.core.ui.StageCredits)}
@@ -67,6 +75,19 @@ acgraph.vector.Stage.prototype.credits = function(opt_value) {
     return this;
   }
   return this.credits_;
+};
+
+
+/**
+ * Getter for tooltip layer. Must be to highest layer to display the tooltip in top of all.
+ * @return {!acgraph.vector.Layer}
+ */
+acgraph.vector.Stage.prototype.getTooltipLayer = function() {
+  if (!this.tooltipLayer_) {
+    this.tooltipLayer_ = this.layer();
+    this.tooltipLayer_.zIndex(1e10);
+  }
+  return this.tooltipLayer_;
 };
 
 
@@ -577,6 +598,14 @@ anychart.themeClones_ = [];
 
 
 /**
+ * Merged clones of themes.
+ * @type {Array.<!Object>}
+ * @private
+ */
+anychart.mergedThemeClones_ = [];
+
+
+/**
  * Sets the theme/themes for anychart globally or gets current theme/themes.
  * @param {?(string|Object|Array<string|Object>)=} opt_value Object/name of a theme or array of objects/names of the themes.
  * @return {string|Object|Array<string|Object>}
@@ -585,6 +614,7 @@ anychart.theme = function(opt_value) {
   if (goog.isDef(opt_value)) {
     anychart.themes_ = opt_value ? (goog.isArray(opt_value) ? opt_value : [opt_value]) : [];
     anychart.themeClones_.length = 0;
+    anychart.mergedThemeClones_.length = 0;
     anychart.themes.merging.clearCache();
   }
   return anychart.themes_;
@@ -611,23 +641,35 @@ anychart.getFullTheme = function(root) {
   var i;
   if (!anychart.themeClones_.length) {
     anychart.themeClones_.push(goog.global['anychart']['themes'][anychart.DEFAULT_THEME] || {});
+    anychart.mergedThemeClones_.push(anychart.themeClones_[0]);
   }
   for (i = anychart.themeClones_.length - 1; i < anychart.themes_.length; i++) {
     var themeToMerge = anychart.themes_[i];
     var clone = anychart.utils.recursiveClone(goog.isString(themeToMerge) ? goog.global['anychart']['themes'][themeToMerge] : themeToMerge);
     anychart.themeClones_.push(goog.isObject(clone) ? clone : {});
+    anychart.mergedThemeClones_.push({});
   }
+
   var startMergeAt = Infinity;
   for (i = 0; i < anychart.themeClones_.length; i++) {
     if (anychart.themes.merging.compileTheme(anychart.themeClones_[i], root, i))
       startMergeAt = Math.min(startMergeAt, i);
   }
-  for (i = Math.max(1, startMergeAt); i < anychart.themeClones_.length; i++) {
-    // theme clones are guaranteed to be objects, so we can skip replacing them
-    anychart.themes.merging.merge(anychart.themeClones_[i], anychart.themeClones_[i - 1]);
+
+  for (i = Math.max(1, startMergeAt); i < anychart.mergedThemeClones_.length; i++) {
+    var rootParts = root.split('.');
+    anychart.themes.merging.setThemePart(
+        anychart.mergedThemeClones_[i],
+        [rootParts[0]],
+        anychart.themes.merging.merge(
+            anychart.utils.recursiveClone(anychart.themes.merging.getThemePart(anychart.themeClones_[i], rootParts[0])),
+            anychart.themes.merging.getThemePart(anychart.mergedThemeClones_[i - 1], rootParts[0])));
+
+    anychart.themes.merging.markMergedDescriptor(root, i);
   }
   anychart.performance.end('Theme compilation');
-  return anychart.themes.merging.getThemePart(anychart.themeClones_[anychart.themeClones_.length - 1], root);
+
+  return anychart.themes.merging.getThemePart(anychart.mergedThemeClones_[anychart.mergedThemeClones_.length - 1], root);
 };
 
 
@@ -663,6 +705,10 @@ anychart.area3d = anychart.area3d || anychart.createNFIMError('3D Area chart');
 
 /** @ignoreDoc */
 anychart.bar = anychart.bar || anychart.createNFIMError('Bar chart');
+
+
+/** @ignoreDoc */
+anychart.vertical = anychart.vertical || anychart.createNFIMError('Bar chart');
 
 
 /** @ignoreDoc */
@@ -1072,6 +1118,7 @@ goog.exportSymbol('anychart.area', anychart.area);//linkedFromModule
 goog.exportSymbol('anychart.verticalArea', anychart.verticalArea);//linkedFromModule
 goog.exportSymbol('anychart.area3d', anychart.area3d);
 goog.exportSymbol('anychart.bar', anychart.bar);//linkedFromModule
+goog.exportSymbol('anychart.vertical', anychart.vertical);
 goog.exportSymbol('anychart.bar3d', anychart.bar3d);
 goog.exportSymbol('anychart.box', anychart.box);
 goog.exportSymbol('anychart.bubble', anychart.bubble);//linkedFromModule

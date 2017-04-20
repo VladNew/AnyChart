@@ -34,7 +34,7 @@ anychart.core.utils.A11y = function(chart) {
    * @type {Function|string}
    * @private
    */
-  this.titleFormatter_ = '';
+  this.titleFormat_ = '';
 
   /**
    * Parent a11y.
@@ -78,16 +78,28 @@ anychart.core.utils.A11y.prototype.enabled = function(opt_value) {
  * Function to format title text.
  * @param {(Function|string)=} opt_value - Function to format content text.
  * @return {Function|string|anychart.core.utils.A11y} Function to format content text or itself for method chaining.
+ * @deprecated Since 7.13.1. Use 'titleFormat' instead.
  */
 anychart.core.utils.A11y.prototype.titleFormatter = function(opt_value) {
+  anychart.core.reporting.warning(anychart.enums.WarningCode.DEPRECATED, null, ['titleFormatter', 'titleFormat'], true);
+  return this.titleFormat(opt_value);
+};
+
+
+/**
+ * Function to format title text.
+ * @param {(Function|string)=} opt_value - Function to format content text.
+ * @return {Function|string|anychart.core.utils.A11y} Function to format content text or itself for method chaining.
+ */
+anychart.core.utils.A11y.prototype.titleFormat = function(opt_value) {
   if (goog.isDef(opt_value)) {
-    if (this.titleFormatter_ != opt_value) {
-      this.titleFormatter_ = opt_value;
+    if (this.titleFormat_ != opt_value) {
+      this.titleFormat_ = opt_value;
       this.dispatchSignal(anychart.Signal.NEEDS_REAPPLICATION);
     }
     return this;
   } else {
-    return this.titleFormatter_;
+    return this.titleFormat_;
   }
 };
 
@@ -133,9 +145,15 @@ anychart.core.utils.A11y.prototype.applyChangesInChildA11y = function() {
 
 /**
  * Applies accessibility settings.
- * @param {Object} textInfo - Object with info to format title.
  */
 anychart.core.utils.A11y.prototype.applyA11y = goog.abstractMethod;
+
+
+/**
+ * Creates text info to apply a11y.
+ * @return {Object} Text info object.
+ */
+anychart.core.utils.A11y.prototype.createTextInfo = goog.abstractMethod;
 
 
 /** @inheritDoc */
@@ -143,14 +161,14 @@ anychart.core.utils.A11y.prototype.serialize = function() {
   var json = anychart.core.utils.A11y.base(this, 'serialize');
   json['enabled'] = this.enabled_;
 
-  if (goog.isFunction(this.titleFormatter())) {
+  if (goog.isFunction(this.titleFormat())) {
     anychart.core.reporting.warning(
         anychart.enums.WarningCode.CANT_SERIALIZE_FUNCTION,
         null,
-        ['A11y titleFormatter']
+        ['A11y titleFormat']
     );
-  } else if (this.titleFormatter_) {
-    json['titleFormatter'] = this.titleFormatter_;
+  } else if (this.titleFormat_) {
+    json['titleFormat'] = this.titleFormat_;
   }
 
   return json;
@@ -169,7 +187,7 @@ anychart.core.utils.A11y.prototype.setupSpecial = function(var_args) {
     this.enabled(!!arg0);
     return true;
   } else if (goog.isFunction(arg0)) {
-    this.titleFormatter(arg0);
+    this.titleFormat(arg0);
     return true;
   }
 
@@ -179,15 +197,21 @@ anychart.core.utils.A11y.prototype.setupSpecial = function(var_args) {
 
 /**
  * @inheritDoc
+ * @suppress {deprecated}
  */
 anychart.core.utils.A11y.prototype.setupByJSON = function(json, opt_default) {
   anychart.core.utils.A11y.base(this, 'setupByJSON', json, opt_default);
   this.enabled('enabled' in json ? json['enabled'] : true);
-  this.titleFormatter(json['titleFormatter']);
+  this.titleFormat(json['titleFormat']);
+  if ('titleFormatter' in json)
+    this.titleFormatter(json['titleFormatter']);
 };
 
 
-/** @inheritDoc */
+/**
+ * @inheritDoc
+ * @suppress {deprecated}
+ */
 anychart.core.utils.A11y.prototype.disposeInternal = function() {
   this.chart = null;
   if (this.parentA11y_) {
@@ -226,10 +250,16 @@ anychart.core.utils.ChartA11y = function(chart) {
 goog.inherits(anychart.core.utils.ChartA11y, anychart.core.utils.A11y);
 
 
+/** @inheritDoc */
+anychart.core.utils.ChartA11y.prototype.createTextInfo = function() {
+  return this.chart.createChartContextProvider();
+};
+
+
 /**
  * @inheritDoc
  */
-anychart.core.utils.ChartA11y.prototype.applyA11y = function(textInfo) {
+anychart.core.utils.ChartA11y.prototype.applyA11y = function() {
   var rootLayer = this.chart.getRootElement();
   rootLayer.attr('role', null);
   rootLayer.attr('aria-hidden', 'true');
@@ -239,11 +269,12 @@ anychart.core.utils.ChartA11y.prototype.applyA11y = function(textInfo) {
 
   if (this.enabled()) {
     var titleText;
+    var textInfo = this.createTextInfo();
 
-    if (this.titleFormatter_) {
-      var formatter = this.titleFormatter_;
+    if (this.titleFormat_) {
+      var formatter = this.titleFormat_;
       if (goog.isString(formatter))
-        formatter = anychart.core.utils.TokenParser.getInstance().getTextFormatter(formatter);
+        formatter = anychart.core.utils.TokenParser.getInstance().getFormat(formatter);
       titleText = formatter.call(textInfo, textInfo);
     }
 
@@ -342,14 +373,15 @@ goog.inherits(anychart.core.utils.SeriesA11y, anychart.core.utils.A11y);
 /**
  * @inheritDoc
  */
-anychart.core.utils.SeriesA11y.prototype.applyA11y = function(textInfo) {
+anychart.core.utils.SeriesA11y.prototype.applyA11y = function() {
   var titleText = null;
   var role = null;
   var layer = /** @type {acgraph.vector.Layer} */ (this.series_.getRootLayer() || this.forceLayer_);
-  if (this.enabled() && this.titleFormatter()) {
-    var formatter = this.titleFormatter();
+  if (this.enabled() && this.titleFormat()) {
+    var textInfo = this.createTextInfo();
+    var formatter = this.titleFormat();
     if (goog.isString(formatter))
-      formatter = anychart.core.utils.TokenParser.getInstance().getTextFormatter(formatter);
+      formatter = anychart.core.utils.TokenParser.getInstance().getFormat(formatter);
     titleText = formatter.call(textInfo, textInfo);
     role = 'img';
   }
@@ -364,6 +396,14 @@ anychart.core.utils.SeriesA11y.prototype.applyA11y = function(textInfo) {
 
 
 /** @inheritDoc */
+anychart.core.utils.SeriesA11y.prototype.createTextInfo = function() {
+  //TODO(AntonKagakin): Remove this method from series.Base
+  //TODO(AntonKagakin): this method exists only because of SeriesBase rudiment.
+  return this.series_.createA11yTextInfo();
+};
+
+
+/** @inheritDoc */
 anychart.core.utils.SeriesA11y.prototype.disposeInternal = function() {
   goog.dispose(this.forceLayer_);
   this.series_ = null;
@@ -372,14 +412,19 @@ anychart.core.utils.SeriesA11y.prototype.disposeInternal = function() {
 
 
 //exports
+/**
+ * @suppress {deprecated}
+ */
 (function() {
   var proto = anychart.core.utils.ChartA11y.prototype;
   proto['enabled'] = proto.enabled;
+  proto['titleFormat'] = proto.titleFormat;
   proto['titleFormatter'] = proto.titleFormatter;
   proto['mode'] = proto.mode;
 
   proto = anychart.core.utils.SeriesA11y.prototype;
   proto['enabled'] = proto.enabled;
+  proto['titleFormat'] = proto.titleFormat;
   proto['titleFormatter'] = proto.titleFormatter;
 })();
 

@@ -72,20 +72,23 @@ anychart.ConsistencyState = {
   BULLET_AXES: 1 << 14,
   BULLET_AXES_MARKERS: 1 << 15,
   BULLET_MARKERS: 1 << 16,
-  //---------------------------------- CARTESIAN STATES (CHART) ---------------------------------
+  //---------------------------------- CHART WITH SERIES STATES (CHART) ---------------------------------
   SERIES_CHART_PALETTE: 1 << 12,
   SERIES_CHART_MARKER_PALETTE: 1 << 13,
   SERIES_CHART_HATCH_FILL_PALETTE: 1 << 14,
-  SERIES_CHART_SCALES: 1 << 15,
-  SERIES_CHART_SERIES: 1 << 16,
-  SERIES_CHART_SCALE_MAPS: 1 << 17,
-  SERIES_CHART_Y_SCALES: 1 << 18,
-  SERIES_CHART_STATISTICS: 1 << 19,
+  SERIES_CHART_SERIES: 1 << 15,
+  //---------------------------------- CHART WITH ORTHOGONAL SCALES STATES (SERIES_CHART) ---------------------------------
+  SCALE_CHART_SCALES: 1 << 16,
+  SCALE_CHART_SCALE_MAPS: 1 << 17,
+  SCALE_CHART_Y_SCALES: 1 << 18,
+  SCALE_CHART_STATISTICS: 1 << 19,
+  //---------------------------------- CHART WITH AXES STATES (SCALE_CHART) -------------------------------
   AXES_CHART_AXES: 1 << 20,
   AXES_CHART_AXES_MARKERS: 1 << 21,
   AXES_CHART_GRIDS: 1 << 22,
   AXES_CHART_CROSSHAIR: 1 << 23,
   AXES_CHART_ANNOTATIONS: 1 << 24,
+  //---------------------------------- CARTESIAN STATES (AXES_CHART) ---------------------------------
   CARTESIAN_ZOOM: 1 << 25,
   CARTESIAN_X_SCROLLER: 1 << 26,
   //---------------------------------- PYRAMID/FUNNEL STATES (CHART) ---------------------------------
@@ -99,44 +102,14 @@ anychart.ConsistencyState = {
   //---------------------------------- PIE STATES (CHART) ---------------------------------
   PIE_LABELS: 1 << 12,
   PIE_DATA: 1 << 13,
-  //---------------------------------- POLAR STATES (CHART) ---------------------------------
-  POLAR_PALETTE: 1 << 12,
-  POLAR_MARKER_PALETTE: 1 << 13,
-  POLAR_HATCH_FILL_PALETTE: 1 << 14,
-  POLAR_SCALES: 1 << 15,
-  POLAR_SERIES: 1 << 16,
-  POLAR_AXES: 1 << 17,
-  POLAR_GRIDS: 1 << 18,
-  //---------------------------------- RADAR STATES (CHART) ---------------------------------
-  RADAR_PALETTE: 1 << 12,
-  RADAR_MARKER_PALETTE: 1 << 13,
-  RADAR_HATCH_FILL_PALETTE: 1 << 14,
-  RADAR_SCALES: 1 << 15,
-  RADAR_SERIES: 1 << 16,
-  RADAR_AXES: 1 << 17,
-  RADAR_GRIDS: 1 << 18,
-  //---------------------------------- SCATTER STATES (CHART) ---------------------------------
-  SCATTER_PALETTE: 1 << 12,
-  SCATTER_MARKER_PALETTE: 1 << 13,
-  SCATTER_HATCH_FILL_PALETTE: 1 << 14,
-  SCATTER_SCALES: 1 << 15,
-  SCATTER_SERIES: 1 << 16,
-  SCATTER_AXES: 1 << 17,
-  SCATTER_AXES_MARKERS: 1 << 18,
-  SCATTER_GRIDS: 1 << 19,
-  SCATTER_CROSSHAIR: 1 << 20,
   //---------------------------------- SPARKLINE STATES (CHART) ---------------------------------
   SPARK_SCALES: 1 << 12,
   SPARK_SERIES: 1 << 13,
   SPARK_AXES_MARKERS: 1 << 14,
-  //---------------------------------- MAP STATES (CHART) ---------------------------------
-  MAP_SCALE: 1 << 12,
-  MAP_COLOR_SCALE: 1 << 13,
-  MAP_GEO_DATA: 1 << 14,
-  MAP_SERIES: 1 << 15,
-  MAP_PALETTE: 1 << 16,
-  MAP_MARKER_PALETTE: 1 << 17,
-  MAP_HATCH_FILL_PALETTE: 1 << 18,
+  //---------------------------------- MAP STATES (SERIES_CHART) ---------------------------------
+  MAP_SCALE: 1 << 16,
+  MAP_COLOR_SCALE: 1 << 17,
+  MAP_GEO_DATA: 1 << 18,
   MAP_COLOR_RANGE: 1 << 19,
   MAP_MOVE: 1 << 20,
   MAP_ZOOM: 1 << 21,
@@ -516,10 +489,11 @@ anychart.core.Base.prototype.markConsistent = function(state) {
 
 /**
  * Checks if an element has any consistency state set.
+ * @param {number=} opt_allowState
  * @return {boolean} True if it has it.
  */
-anychart.core.Base.prototype.isConsistent = function() {
-  return !this.consistency_;
+anychart.core.Base.prototype.isConsistent = function(opt_allowState) {
+  return !(this.consistency_ & ~(opt_allowState || 0));
 };
 
 

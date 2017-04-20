@@ -86,6 +86,9 @@ anychart.core.shapeManagers.Base = function(series, config, interactive, opt_sha
     var val = String(type).toLowerCase();
     var cls;
     switch (val) {
+      case anychart.enums.ShapeType.NONE:
+        cls = null;
+        break;
       case anychart.enums.ShapeType.RECT:
         cls = acgraph.rect;
         break;
@@ -207,21 +210,51 @@ anychart.core.shapeManagers.Base.prototype.createShape = function(name, state, i
   }
   this.shapePoolPointers[shapeType]++;
   this.usedShapes[shapeType].push(shape);
-  var fill = /** @type {acgraph.vector.Fill|acgraph.vector.PatternFill} */(descriptor.fill(this.series, state));
-  shape.fill(fill);
-  shape.stroke(/** @type {acgraph.vector.Stroke} */(descriptor.stroke(this.series, state)));
-  shape.zIndex(descriptor.zIndex + baseZIndex);
-  if (this.addInterctivityInfo)
-    this.setupInteractivity(shape, descriptor.isHatchFill, indexOrGlobal);
 
-  // we want to avoid adding invisible hatchFill shapes to the layer.
-  if (descriptor.isHatchFill && !(
-      fill ||
+  return this.configureShape(name, state, indexOrGlobal, baseZIndex, shape, true);
+};
+
+
+/**
+ *
+ * @param {string} name
+ * @param {number} state
+ * @param {number|boolean} indexOrGlobal
+ * @param {number} baseZIndex
+ * @param {acgraph.vector.Shape} shape
+ * @param {boolean=} opt_needLayer
+ * @return {acgraph.vector.Shape}
+ * @protected
+ */
+anychart.core.shapeManagers.Base.prototype.configureShape = function(name, state, indexOrGlobal, baseZIndex, shape, opt_needLayer) {
+  var descriptor = this.defs[name];
+
+  var fill = /** @type {acgraph.vector.Fill|acgraph.vector.PatternFill} */(descriptor.fill(this.series, state));
+  var stroke = /** @type {acgraph.vector.Stroke} */(descriptor.stroke(this.series, state));
+
+  shape.fill(fill);
+  shape.stroke(stroke);
+  shape.disableStrokeScaling(true);
+  shape.zIndex(descriptor.zIndex + baseZIndex);
+
+  if (this.addInterctivityInfo) {
+    this.setupInteractivity(shape, descriptor.isHatchFill, indexOrGlobal);
+  }
+
+  var fillCondition = !(fill ||
       (state != anychart.PointState.NORMAL && descriptor.fill(this.series, anychart.PointState.NORMAL)) ||
       (state != anychart.PointState.HOVER && descriptor.fill(this.series, anychart.PointState.HOVER)) ||
-      (state != anychart.PointState.SELECT && descriptor.fill(this.series, anychart.PointState.SELECT)))) {
-    shape.parent(null);
-  } else {
+      (state != anychart.PointState.SELECT && descriptor.fill(this.series, anychart.PointState.SELECT)));
+
+  var layerCondition = opt_needLayer ? descriptor.isHatchFill && fillCondition : descriptor.isHatchFill;
+
+  if (layerCondition) {
+    if (fillCondition) {
+      shape.parent(null);
+    } else {
+      shape.parent(this.layer);
+    }
+  } else if (opt_needLayer) {
     shape.parent(this.layer);
   }
   return shape;
@@ -232,13 +265,16 @@ anychart.core.shapeManagers.Base.prototype.createShape = function(name, state, i
  * Clears handled paths.
  */
 anychart.core.shapeManagers.Base.prototype.clearShapes = function() {
-  for (var type in this.usedShapes) {
-    var shapes = this.usedShapes[type];
-    for (var i = 0; i < shapes.length; i++) {
-      var shape = shapes[i];
+  var type, shapes, shape, i;
+  for (type in this.usedShapes) {
+    shapes = this.usedShapes[type];
+    for (i = 0; i < shapes.length; i++) {
+      shape = shapes[i];
       shape.parent(null);
-      if (shape instanceof acgraph.vector.Path)
+      if (shape instanceof acgraph.vector.Path) {
         shape.clear();
+        shape.setTransformationMatrix(1, 0, 0, 1, 0, 0);
+      }
     }
     this.shapePoolPointers[type] = 0;
     shapes.length = 0;
@@ -251,40 +287,64 @@ anychart.core.shapeManagers.Base.prototype.clearShapes = function() {
  * @param {number} state - Shapes group state.
  * @param {Object.<string>=} opt_only If set - contains a subset of shape names that should be returned.
  * @param {number=} opt_baseZIndex - zIndex that is used as a base zIndex for all shapes of the group.
+ * @param {acgraph.vector.Shape=} opt_shape Foreign shape.
  * @return {Object.<string, acgraph.vector.Shape>}
  */
-anychart.core.shapeManagers.Base.prototype.getShapesGroup = function(state, opt_only, opt_baseZIndex) {
+anychart.core.shapeManagers.Base.prototype.getShapesGroup = function(state, opt_only, opt_baseZIndex, opt_shape) {
   var res = {};
   var names = opt_only || this.defs;
   var atPoint = this.series.isDiscreteBased();
-  var iterator, indexOrGlobal;
+  var indexOrGlobal;
   if (atPoint) {
-    iterator = this.series.getIterator();
-    indexOrGlobal = iterator.getIndex();
+    indexOrGlobal = this.series.getIterator().getIndex();
   } else {
-    iterator = null;
     indexOrGlobal = true;
   }
   for (var name in names) {
-    res[name] = this.createShape(name, state, indexOrGlobal, opt_baseZIndex || 0);
+    var descriptor = names[name];
+    if (descriptor.shapeType == anychart.enums.ShapeType.NONE && opt_shape) {
+      if (opt_shape instanceof acgraph.vector.Shape)
+        res[name] = this.configureShape(name, state, indexOrGlobal, opt_baseZIndex || 0, opt_shape);
+    } else {
+      res[name] = this.createShape(name, state, indexOrGlobal, opt_baseZIndex || 0);
+    }
   }
   this.postProcessor(this.series, res, state);
-  if (iterator)
-    iterator.meta(this.shapesFieldName, res);
   return res;
+};
+
+
+/**
+ * Returns a new object with all defined paths for the next point.
+ * @param {number} state - Shapes group state.
+ * @param {number=} opt_baseZIndex - zIndex that is used as a base zIndex for all shapes of the group.
+ * @return {Object.<string, acgraph.vector.Shape>}
+ */
+anychart.core.shapeManagers.Base.prototype.addShapesGroup = function(state, opt_baseZIndex) {
+  return this.getShapesGroup(state, undefined, opt_baseZIndex);
 };
 
 
 /**
  * Updates z indexed for the passed shapes group.
  * @param {number} newBaseZIndex
- * @param {Object.<string, acgraph.vector.Shape>=} opt_shapesGroup
+ * @param {(Object.<string, acgraph.vector.Shape>|Array.<Object.<string, acgraph.vector.Shape>>)=} opt_shapesGroup
  */
 anychart.core.shapeManagers.Base.prototype.updateZIndex = function(newBaseZIndex, opt_shapesGroup) {
   if (opt_shapesGroup)
-    for (var name in opt_shapesGroup) {
-      var descriptor = this.defs[name]; // if it is undefined - something went wrong
-      opt_shapesGroup[name].zIndex(descriptor.zIndex + newBaseZIndex);
+    if (goog.isArray(opt_shapesGroup)) {
+      for (var i = 0; i < opt_shapesGroup.length; i++) {
+        var shGroup = opt_shapesGroup[i];
+        if (shGroup) {
+          for (var name in shGroup) {
+            shGroup[name].zIndex(this.defs[name].zIndex + newBaseZIndex);
+          }
+        }
+      }
+    } else {
+      for (var name in opt_shapesGroup) {
+        opt_shapesGroup[name].zIndex(this.defs[name].zIndex + newBaseZIndex);
+      }
     }
 };
 
@@ -292,26 +352,54 @@ anychart.core.shapeManagers.Base.prototype.updateZIndex = function(newBaseZIndex
 /**
  * Updates coloring for the passed shapes group.
  * @param {number} state
- * @param {Object.<string, acgraph.vector.Shape>=} opt_shapesGroup
+ * @param {(Object.<string, acgraph.vector.Shape>|Array.<Object.<string, acgraph.vector.Shape>>)=} opt_shapesGroup
  */
 anychart.core.shapeManagers.Base.prototype.updateColors = function(state, opt_shapesGroup) {
   if (opt_shapesGroup) {
-    for (var name in opt_shapesGroup) {
-      var descriptor = this.defs[name]; // if it is undefined - something went wrong
-      var shape = opt_shapesGroup[name];
-      shape.fill(/** @type {acgraph.vector.Fill|acgraph.vector.PatternFill} */(descriptor.fill(this.series, state)));
-      shape.stroke(/** @type {acgraph.vector.Stroke} */(descriptor.stroke(this.series, state)));
-      // we want to avoid adding invisible hatchFill shapes to the layer.
-      if (descriptor.isHatchFill) {
-        if (shape.fill() == 'none' && shape.stroke() == 'none') {
-          shape.visible(false);
-        } else {
-          shape.visible(true);
-        }
+    if (goog.isArray(opt_shapesGroup)) {
+      for (var i = 0; i < opt_shapesGroup.length; i++) {
+        if (opt_shapesGroup[i])
+          this.updateColors_(state, opt_shapesGroup[i]);
+      }
+    } else {
+      this.updateColors_(state, opt_shapesGroup);
+    }
+  }
+};
+
+
+/**
+ * Updates coloring for the passed shapes group.
+ * @param {number} state
+ * @param {Object.<string, acgraph.vector.Shape>} shapesGroup
+ * @private
+ */
+anychart.core.shapeManagers.Base.prototype.updateColors_ = function(state, shapesGroup) {
+  for (var name in shapesGroup) {
+    var descriptor = this.defs[name]; // if it is undefined - something went wrong
+    var shape = shapesGroup[name];
+
+    var fill = /** @type {acgraph.vector.Fill|acgraph.vector.PatternFill} */(descriptor.fill(this.series, state));
+    var stroke = /** @type {acgraph.vector.Stroke} */(descriptor.stroke(this.series, state));
+    shape.fill(fill);
+    shape.stroke(stroke);
+
+    // we want to avoid adding invisible hatchFill shapes to the layer.
+    if (descriptor.isHatchFill) {
+      if (shape.fill() == 'none' && shape.stroke() == 'none') {
+        shape.visible(false);
+      } else {
+        shape.visible(true);
       }
     }
-    this.postProcessor(this.series, opt_shapesGroup, state);
+
+    if (!descriptor.isHatchFill) {
+      var iterator = this.series.getIterator();
+      iterator.meta('fill', fill);
+      iterator.meta('stroke', stroke);
+    }
   }
+  this.postProcessor(this.series, shapesGroup, state);
 };
 
 

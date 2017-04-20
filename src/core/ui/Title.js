@@ -247,14 +247,14 @@ anychart.core.ui.Title.prototype.SIMPLE_PROPS_DESCRIPTORS = (function() {
   map['width'] = anychart.core.settings.createDescriptor(
       anychart.enums.PropertyHandlerType.SINGLE_ARG,
       'width',
-      anychart.core.settings.asIsNormalizer,
+      anychart.core.settings.numberOrPercentNormalizer,
       anychart.ConsistencyState.BOUNDS,
       anychart.Signal.NEEDS_REDRAW | anychart.Signal.BOUNDS_CHANGED);
 
   map['height'] = anychart.core.settings.createDescriptor(
       anychart.enums.PropertyHandlerType.SINGLE_ARG,
       'height',
-      anychart.core.settings.asIsNormalizer,
+      anychart.core.settings.numberOrPercentNormalizer,
       anychart.ConsistencyState.BOUNDS,
       anychart.Signal.NEEDS_REDRAW | anychart.Signal.BOUNDS_CHANGED);
 
@@ -1229,7 +1229,6 @@ anychart.core.ui.Title.prototype.setupByJSON = function(config, opt_default) {
 (function() {
   var proto = anychart.core.ui.Title.prototype;
   proto['enabled'] = proto.enabled;
-
   // proto['fontSize'] = proto.fontSize;
   // proto['fontFamily'] = proto.fontFamily;
   // proto['fontColor'] = proto.fontColor;
@@ -1250,12 +1249,11 @@ anychart.core.ui.Title.prototype.setupByJSON = function(config, opt_default) {
   // proto['disablePointerEvents'] = proto.disablePointerEvents;
   // proto['useHtml'] = proto.useHtml;
   proto['textSettings'] = proto.textSettings;
-
   // proto['text'] = proto.text;
   proto['background'] = proto.background;
-  proto['rotation'] = proto.rotation;
-  proto['width'] = proto.width;
-  proto['height'] = proto.height;
+  // proto['rotation'] = proto.rotation;
+  // proto['width'] = proto.width;
+  // proto['height'] = proto.height;
   proto['margin'] = proto.margin;
   proto['padding'] = proto.padding;
   // proto['align'] = proto.align;

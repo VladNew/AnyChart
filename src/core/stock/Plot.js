@@ -1,4 +1,5 @@
 goog.provide('anychart.core.stock.Plot');
+
 goog.require('anychart.core.IPlot');
 goog.require('anychart.core.VisualBaseWithBounds');
 goog.require('anychart.core.annotations.PlotController');
@@ -10,8 +11,8 @@ goog.require('anychart.core.series.Stock');
 goog.require('anychart.core.stock.indicators');
 goog.require('anychart.core.ui.Background');
 goog.require('anychart.core.ui.Legend');
-goog.require('anychart.core.utils.GenericContextProvider');
 goog.require('anychart.enums');
+goog.require('anychart.format.Context');
 goog.require('anychart.palettes');
 goog.require('anychart.scales.Linear');
 goog.require('anychart.utils');
@@ -1613,21 +1614,18 @@ anychart.core.stock.Plot.prototype.getLegendAutoText = function(legendFormatter,
   var formatter;
   if (!isNaN(opt_titleValue) && (formatter = legendFormatter)) {
     if (goog.isString(formatter))
-      formatter = anychart.core.utils.TokenParser.getInstance().getTextFormatter(formatter);
+      formatter = anychart.core.utils.TokenParser.getInstance().getFormat(formatter);
     if (goog.isFunction(formatter)) {
       var grouping = /** @type {anychart.core.stock.Grouping} */(this.chart_.grouping());
-      var context = new anychart.core.utils.GenericContextProvider({
-        'value': opt_titleValue,
-        'hoveredDate': opt_titleValue,
-        'dataIntervalUnit': grouping.getCurrentDataInterval()['unit'],
-        'dataIntervalUnitCount': grouping.getCurrentDataInterval()['count'],
-        'isGrouped': grouping.isGrouped()
-      }, {
-        'value': anychart.enums.TokenType.DATE_TIME,
-        'hoveredDate': anychart.enums.TokenType.DATE_TIME,
-        'dataIntervalUnit': anychart.enums.TokenType.STRING,
-        'dataIntervalUnitCount': anychart.enums.TokenType.STRING
-      });
+
+      var values = {
+        'value': {value: opt_titleValue, type: anychart.enums.TokenType.DATE_TIME},
+        'hoveredDate': {value: opt_titleValue, type: anychart.enums.TokenType.DATE_TIME},
+        'dataIntervalUnit': {value: grouping.getCurrentDataInterval()['unit'], type: anychart.enums.TokenType.STRING},
+        'dataIntervalUnitCount': {value: grouping.getCurrentDataInterval()['count'], type: anychart.enums.TokenType.NUMBER},
+        'isGrouped': {value: grouping.isGrouped()}
+      };
+      var context = (new anychart.format.Context(values)).propagate();
       return formatter.call(context, context);
     }
   }
@@ -1648,7 +1646,7 @@ anychart.core.stock.Plot.prototype.updateLegend_ = function(opt_seriesBounds, op
   if (opt_seriesBounds) {
     legend.parentBounds(opt_seriesBounds);
   }
-  var autoText = this.getLegendAutoText(/** @type {string|Function} */ (legend.titleFormatter()), opt_titleValue);
+  var autoText = this.getLegendAutoText(/** @type {string|Function} */ (legend.titleFormat()), opt_titleValue);
   if (!goog.isNull(autoText))
     legend.title().autoText(autoText);
   if (!legend.itemsSource())
@@ -1682,10 +1680,10 @@ anychart.core.stock.Plot.prototype.onLegendSignal_ = function(event) {
 /**
  * Create legend items provider specific to chart type.
  * @param {string} sourceMode Items source mode (default|categories).
- * @param {?(Function|string)} itemsTextFormatter Legend items text formatter.
+ * @param {?(Function|string)} itemsFormat Legend items text formatter.
  * @return {!Array.<anychart.core.ui.Legend.LegendItemProvider>} Legend items provider.
  */
-anychart.core.stock.Plot.prototype.createLegendItemsProvider = function(sourceMode, itemsTextFormatter) {
+anychart.core.stock.Plot.prototype.createLegendItemsProvider = function(sourceMode, itemsFormat) {
   /**
    * @type {!Array.<anychart.core.ui.Legend.LegendItemProvider>}
    */
@@ -1694,7 +1692,7 @@ anychart.core.stock.Plot.prototype.createLegendItemsProvider = function(sourceMo
     /** @type {anychart.core.series.Stock} */
     var series = this.series_[i];
     if (series) {
-      var itemData = series.getLegendItemData(itemsTextFormatter);
+      var itemData = series.getLegendItemData(itemsFormat);
       itemData['sourceUid'] = goog.getUid(this);
       itemData['sourceKey'] = series.id();
       data.push(itemData);
@@ -2206,7 +2204,7 @@ anychart.core.stock.Plot.prototype.serialize = function() {
   json['dateTimeHighlighter'] = anychart.color.serialize(this.dateTimeHighlighterStroke_);
 
   json['palette'] = this.palette().serialize();
-  // json['markerPalette'] = this.markerPalette().serialize();
+  json['markerPalette'] = this.markerPalette().serialize();
   json['hatchFillPalette'] = this.hatchFillPalette().serialize();
 
   var yAxes = [];
@@ -2340,7 +2338,7 @@ anychart.core.stock.Plot.prototype.setupByJSON = function(config, opt_default) {
   this.defaultSeriesType(config['defaultSeriesType']);
 
   this.palette(config['palette']);
-  // this.markerPalette(config['markerPalette']);
+  this.markerPalette(config['markerPalette']);
   this.hatchFillPalette(config['hatchFillPalette']);
 
   this.background(config['background']);
@@ -2626,7 +2624,7 @@ anychart.core.stock.Plot.Dragger.prototype.limitY = function(y) {
   proto['sma'] = proto.sma;
   proto['stochastic'] = proto.stochastic;
   proto['palette'] = proto.palette;
-  // proto['markerPalette'] = proto.markerPalette;
+  proto['markerPalette'] = proto.markerPalette;
   proto['hatchFillPalette'] = proto.hatchFillPalette;
   proto['annotations'] = proto.annotations;
 })();

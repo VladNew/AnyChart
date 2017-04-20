@@ -417,7 +417,7 @@ anychart.core.ui.Callout.prototype.updateOnZoomOrMove = function() {
     iterator.select(item.getIndex());
 
     var positionProvider = this.createPositionProvider(label.getIndex())['value'];
-    var middlePoint = series.getMiddlePoint()['value'];
+    var middlePoint = series.getMiddlePoint();
 
     connector
         .clear()
@@ -824,7 +824,7 @@ anychart.core.ui.Callout.prototype.createPositionProvider = function(index) {
 /**
  * Configure label with series labels settings.
  * @param {anychart.core.ui.LabelsFactory.Label} label Label for settings applying.
- * @param {anychart.core.map.series.Base} series Series of label.
+ * @param {anychart.core.series.Map} series Series of label.
  * @param {anychart.PointState|number} index Point index.
  * @param {number} pointState Point state.
  * @return {anychart.core.ui.LabelsFactory.Label}
@@ -846,7 +846,7 @@ anychart.core.ui.Callout.prototype.configureSeriesLabel = function(label, series
     currentLabelsFactory = /** @type {anychart.core.ui.LabelsFactory} */(series.hoverLabels());
   } else {
     stateLabel = null;
-    currentLabelsFactory = series.labels();
+    currentLabelsFactory = null;
   }
 
   var formatProvider = series.createFormatProvider(true);
@@ -873,7 +873,7 @@ anychart.core.ui.Callout.prototype.configureSeriesLabel = function(label, series
 anychart.core.ui.Callout.prototype.configureLabel = function(item, label, opt_pointState) {
   var pointIndex = item.getIndex();
 
-  var series = /** @type {anychart.core.map.series.Base} */(item.getSeries());
+  var series = /** @type {anychart.core.series.Map} */(item.getSeries());
   var iterator = series.getResetIterator();
   iterator.select(pointIndex);
 
@@ -896,43 +896,50 @@ anychart.core.ui.Callout.prototype.configureLabel = function(item, label, opt_po
 
   var parentSettings = this.labels().getChangedSettings();
   parentSettings['enabled'] = this.labels().enabled();
+
   var currentSettings = calloutLabelsFactory.getChangedSettings();
   currentSettings['enabled'] = goog.isNull(calloutLabelsFactory.enabled()) ? parentSettings['enabled'] : calloutLabelsFactory.enabled();
 
-  label.setSettings(parentSettings, goog.object.extend(label.superSettingsObj, currentSettings));
+  label.setSettings(parentSettings, label.state('pointState') ? goog.object.extend(label.state('pointState'), currentSettings) : currentSettings);
 
   var positionProvider = this.createPositionProvider(label.getIndex());
-  positionProvider['connectorPoint'] = series.getMiddlePoint();
+  positionProvider['connectorPoint'] = {'value': series.getMiddlePoint()};
   label.positionProvider(positionProvider);
 
   if (this.isHorizontal()) {
-    label.width(this.internalItemLength_).height(this.internalItemSize_);
+    label['width'](this.internalItemLength_);
+    label['height'](this.internalItemSize_);
   } else {
-    label.width(this.internalItemSize_).height(this.internalItemLength_);
+    label['width'](this.internalItemSize_);
+    label['height'](this.internalItemLength_);
   }
 
   switch (this.orientation()) {
     case anychart.enums.Orientation.TOP:
-      label.anchor('centerbottom');
+      label['anchor']('centerbottom');
       break;
     case anychart.enums.Orientation.RIGHT:
-      label.anchor('leftcenter');
+      label['anchor']('leftcenter');
       break;
     case anychart.enums.Orientation.BOTTOM:
-      label.anchor('centertop');
+      label['anchor']('centertop');
       break;
     case anychart.enums.Orientation.LEFT:
-      label.anchor('rightcenter');
+      label['anchor']('rightcenter');
       break;
   }
 
-  var fill = series.getFinalFill(true, pointState);
-  var stroke = series.getFinalStroke(true, pointState);
 
-  label.background()
-      .enabled(true)
-      .fill(fill)
-      .stroke(stroke);
+  var shapes = iterator.meta('shapes');
+  if (shapes) {
+    var fill = iterator.meta('fill');
+    var stroke = iterator.meta('stroke');
+
+    label.background()
+        .enabled(true)
+        .fill(fill)
+        .stroke(stroke);
+  }
 
   return label;
 };
@@ -1217,9 +1224,9 @@ anychart.core.ui.Callout.prototype.setupByJSON = function(config, opt_default) {
   if ('margin' in config)
     this.margin(config['margin']);
 
-  this.labels().setup(config['labels']);
-  this.hoverLabels().setup(config['hoverLabels']);
-  this.selectLabels().setup(config['selectLabels']);
+  this.labels().setupByVal(config['labels'], opt_default);
+  this.hoverLabels().setupByVal(config['hoverLabels'], opt_default);
+  this.selectLabels().setupByVal(config['selectLabels'], opt_default);
 
   this.width(config['width']);
   this.length(config['length']);

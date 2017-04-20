@@ -5,7 +5,7 @@ goog.require('anychart.core.axes.MapTicks');
 goog.require('anychart.core.settings');
 goog.require('anychart.core.ui.LabelsFactory');
 goog.require('anychart.core.ui.Title');
-goog.require('anychart.core.utils.MapAxisLabelsContextProvider');
+goog.require('anychart.format.Context');
 goog.require('anychart.math.Rect');
 //endregion
 
@@ -704,7 +704,8 @@ anychart.core.axes.Map.prototype.getOverlappedLabels_ = function() {
         var k = -1;
 
         var parentLabels = this.parent().labels();
-        var isLabels = goog.isNull(this.labels().enabled()) ? parentLabels.enabled() : this.labels().enabled();
+        var labelsEnabledState = this.labels().enabled();
+        var isLabels = labelsEnabledState == void 0 ? parentLabels.enabled() : labelsEnabledState;
 
         var scaleMinorTicks;
         if (this.isHorizontal()) {
@@ -723,7 +724,8 @@ anychart.core.axes.Map.prototype.getOverlappedLabels_ = function() {
         var minorTickVal, minorRatio;
 
         var parentMinorLabels = this.parent().minorLabels();
-        var isMinorLabels = goog.isNull(this.minorLabels().enabled()) ? parentMinorLabels.enabled() : this.minorLabels().enabled();
+        var minorLabelsEnabledState = this.minorLabels().enabled();
+        var isMinorLabels = minorLabelsEnabledState == void 0 ? parentMinorLabels.enabled() : minorLabelsEnabledState;
 
         while (i < ticksArrLen || j < minorTicksArrLen) {
           tickVal = parseFloat(scaleTicksArr[i]);
@@ -776,7 +778,7 @@ anychart.core.axes.Map.prototype.getOverlappedLabels_ = function() {
               labels.push(false);
             }
             i++;
-            if (ratio == minorRatio && (this.labels().enabled() || this.ticks().enabled())) {
+            if (ratio == minorRatio && (isLabels || this.ticks().enabled())) {
               minorLabels.push(false);
               j++;
             }
@@ -843,7 +845,55 @@ anychart.core.axes.Map.prototype.getOverlappedLabels_ = function() {
  * @protected
  */
 anychart.core.axes.Map.prototype.getLabelsFormatProvider = function(index, value) {
-  return new anychart.core.utils.MapAxisLabelsContextProvider(this, index, value);
+  var labelText, sideOfTheWorld;
+  value = parseFloat(value);
+
+  var grad, minutes, seconds;
+  var decimal = Math.abs(value) % 1;
+
+  grad = Math.floor(Math.abs(value));
+  minutes = Math.floor(60 * decimal);
+  seconds = Math.floor(60 * ((60 * decimal) % 1));
+
+  labelText = grad + '\u00B0';
+  if (seconds != 0 || (!seconds && minutes != 0)) {
+    minutes += '';
+    if (minutes.length == 1) minutes = '0' + minutes;
+    labelText += minutes + '\'';
+  }
+
+  if (this.isHorizontal()) {
+    sideOfTheWorld = value > 0 ? 'E' : 'W';
+  } else {
+    sideOfTheWorld = value > 0 ? 'N' : 'S';
+  }
+
+  labelText += sideOfTheWorld;
+  var scale = this.scale();
+
+  var values = {
+    'axis': {value: this, type: anychart.enums.TokenType.UNKNOWN},
+    'scale': {value: scale, type: anychart.enums.TokenType.UNKNOWN},
+    'index': {value: index, type: anychart.enums.TokenType.NUMBER},
+    'value': {value: labelText, type: anychart.enums.TokenType.STRING},
+    'tickValue': {value: value, type: anychart.enums.TokenType.NUMBER},
+    'max': {value: goog.isDef(scale.max) ? scale.max : null, type: anychart.enums.TokenType.NUMBER},
+    'min': {value: goog.isDef(scale.min) ? scale.min : null, type: anychart.enums.TokenType.NUMBER}
+  };
+
+  var tokenAliases = {};
+  tokenAliases[anychart.enums.StringToken.AXIS_SCALE_MAX] = 'max';
+  tokenAliases[anychart.enums.StringToken.AXIS_SCALE_MIN] = 'min';
+
+  var tokenCustomValues = {};
+  tokenCustomValues[anychart.enums.StringToken.AXIS_NAME] = {value: this.title().text(), type: anychart.enums.TokenType.STRING};
+
+  var context = new anychart.format.Context(values);
+  context
+      .tokenAliases(tokenAliases)
+      .tokenCustomValues(tokenCustomValues);
+
+  return context.propagate();
 };
 
 
@@ -1005,11 +1055,13 @@ anychart.core.axes.Map.prototype.getAffectingBounds = function(opt_bounds) {
     var title = this.title();
     var labels = this.labels();
     var parentLabels = this.parent().labels();
-    var labelsEnabled = goog.isNull(labels.enabled()) ? parentLabels.enabled() : labels.enabled();
+    var labelsEnabledState = labels.enabled();
+    var labelsEnabled = labelsEnabledState == void 0 ? parentLabels.enabled() : labelsEnabledState;
 
     var minorLabels = this.minorLabels();
     var parentMinorLabels = this.parent().minorLabels();
-    var minorLabelsEnabled = goog.isNull(minorLabels.enabled()) ? parentMinorLabels.enabled() : minorLabels.enabled();
+    var minorLabelsEnabledState = minorLabels.enabled();
+    var minorLabelsEnabled = minorLabelsEnabledState == void 0 ? parentMinorLabels.enabled() : minorLabelsEnabledState;
 
     var axisTicks = this.ticks();
     axisTicks.setScale(scale);
@@ -1208,8 +1260,7 @@ anychart.core.axes.Map.prototype.drawLabel_ = function(value, isMajor, index) {
   if (goog.isDef(labelChangedSettings['enabled']) && labelChangedSettings['enabled'] == null)
     delete labelChangedSettings['enabled'];
 
-  label.setSettings(parentLabels.getChangedSettings(), labelChangedSettings);
-  label.currentLabelsFactory(/** @type {anychart.core.ui.LabelsFactory} */(parentLabels));
+  label.stateOrder([labelChangedSettings, 'auto', parentLabels, labels.themeSettings, parentLabels.themeSettings]);
 };
 
 
@@ -1566,13 +1617,15 @@ anychart.core.axes.Map.prototype.draw = function() {
     if (!labels.container()) labels.container(/** @type {acgraph.vector.ILayer} */(this.container()));
     labels.parentBounds(/** @type {anychart.math.Rect} */(this.parentBounds()));
     labels.clear();
-    labelsEnabled = goog.isNull(labels.enabled()) ? this.parent().labels().enabled() : labels.enabled();
+    var labelsEnabledState = this.labels().enabled();
+    labelsEnabled = labelsEnabledState == void 0 ? this.parent().labels().enabled() : labelsEnabledState;
 
     minorLabels = this.minorLabels();
     if (!minorLabels.container()) minorLabels.container(/** @type {acgraph.vector.ILayer} */(this.container()));
     minorLabels.parentBounds(/** @type {anychart.math.Rect} */(this.parentBounds()));
     minorLabels.clear();
-    minorLabelsEnabled = goog.isNull(minorLabels.enabled()) ? this.parent().minorLabels().enabled() : minorLabels.enabled();
+    var minorLabelsEnabledState = this.minorLabels().enabled();
+    minorLabelsEnabled = minorLabelsEnabledState == void 0 ? this.parent().minorLabels().enabled() : minorLabelsEnabledState;
 
     this.markConsistent(anychart.ConsistencyState.AXIS_LABELS);
   }

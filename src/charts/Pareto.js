@@ -40,7 +40,8 @@ anychart.charts.Pareto.prototype.data = function(opt_value, opt_csvSettings) {
   if (goog.isDef(opt_value)) {
     // handle HTML table data
     if (opt_value) {
-      if (opt_value['caption']) this.title(opt_value['caption']);
+      var title = opt_value['title'] || opt_value['caption'];
+      if (title) this.title(title);
       if (opt_value['rows']) opt_value = opt_value['rows'];
     }
 
@@ -506,7 +507,7 @@ anychart.charts.Pareto.prototype.onBeforeRowsValuesSpreading = function(seriesDa
 //region --- Drawing
 /** @inheritDoc */
 anychart.charts.Pareto.prototype.drawContent = function(bounds) {
-  if (this.hasInvalidationState(anychart.ConsistencyState.SERIES_CHART_SCALE_MAPS)) {
+  if (this.hasInvalidationState(anychart.ConsistencyState.SCALE_CHART_SCALE_MAPS)) {
     this.updateScales();
   }
   return anychart.charts.Pareto.base(this, 'drawContent', bounds);

@@ -1,7 +1,8 @@
 goog.provide('anychart.core.series.Pareto');
+
 goog.require('anychart.core.series.Cartesian');
 goog.require('anychart.core.utils.IInteractiveSeries');
-goog.require('anychart.core.utils.ParetoSeriesPointContextProvider');
+goog.require('anychart.format.Context');
 goog.forwardDeclare('anychart.data.ParetoMapping');
 goog.forwardDeclare('anychart.data.ParetoSeriesMapping');
 
@@ -26,30 +27,31 @@ goog.inherits(anychart.core.series.Pareto, anychart.core.series.Cartesian);
 
 //region --- Overrides
 /** @inheritDoc */
-anychart.core.series.Pareto.prototype.createLabelsContextProvider = function() {
-  var provider = new anychart.core.utils.ParetoSeriesPointContextProvider(this, this.getYValueNames(), this.supportsError());
-  provider.applyReferenceValues();
-  return provider;
-};
-
-
-/** @inheritDoc */
-anychart.core.series.Pareto.prototype.createTooltipContextProvider = function() {
-  if (!this.tooltipContext) {
-    /**
-     * Tooltip context cache.
-     * @type {anychart.core.utils.ParetoSeriesPointContextProvider}
-     * @protected
-     */
-    this.tooltipContext = new anychart.core.utils.ParetoSeriesPointContextProvider(this, this.getYValueNames(), this.supportsError());
+anychart.core.series.Pareto.prototype.updateContext = function(provider, opt_rowInfo) {
+  provider = anychart.core.series.Pareto.base(this, 'updateContext', provider, opt_rowInfo);
+  var values = provider.values();
+  if (goog.isDef(values['index']) && values['index'].value > -1) {
+    var data = this.data();
+    if (goog.isDef(data)) {
+      var index = values['index'].value;
+      var paretoMapping = /** @type {anychart.data.Mapping} */ (data.getRowMapping(index));
+      if ((paretoMapping instanceof anychart.data.ParetoMapping) || (paretoMapping instanceof anychart.data.ParetoSeriesMapping)) {
+        values['cf'] = {value: paretoMapping.getCumulativeFrequency(index), type: anychart.enums.TokenType.NUMBER};
+        values['rf'] = {value: paretoMapping.getRelativeFrequency(index), type: anychart.enums.TokenType.NUMBER};
+      }
+    }
   }
-  this.tooltipContext.applyReferenceValues();
-  return this.tooltipContext;
+
+  var tokenAliases = provider.tokenAliases();
+  tokenAliases[anychart.enums.StringToken.CUMULATIVE_FREQUENCY] = 'cf';
+  tokenAliases[anychart.enums.StringToken.RELATIVE_FREQUENCY] = 'rf';
+
+  return /** @type {anychart.format.Context} */ (provider.propagate(values));
 };
 
 
 /** @inheritDoc */
-anychart.core.series.Pareto.prototype.getColorResolutionContext = function(opt_baseColor, opt_ignorePointSettings) {
+anychart.core.series.Pareto.prototype.getColorResolutionContext = function(opt_baseColor, opt_ignorePointSettings, opt_ignoreColorScale) {
   var ctx = anychart.core.series.Pareto.base(this, 'getColorResolutionContext', opt_baseColor, opt_ignorePointSettings);
   this.applyCFRFTo(ctx, ctx['index']);
   return ctx;

@@ -740,7 +740,7 @@ anychart.charts.HeatMap.prototype.colorScaleInvalidated_ = function(event) {
 //
 //----------------------------------------------------------------------------------------------------------------------
 /** @inheritDoc */
-anychart.charts.HeatMap.prototype.createLegendItemsProvider = function(sourceMode, itemsTextFormatter) {
+anychart.charts.HeatMap.prototype.createLegendItemsProvider = function(sourceMode, itemsFormat) {
   var i, count;
   /**
    * @type {!Array.<anychart.core.ui.Legend.LegendItemProvider>}
@@ -831,7 +831,7 @@ anychart.charts.HeatMap.prototype.legendItemOver = function(item, event) {
 
   var sourceMode = this.legend().itemsSourceMode();
   if (sourceMode == anychart.enums.LegendItemsSourceMode.CATEGORIES) {
-    series = /** @type {anychart.core.map.series.Base} */(meta.series);
+    series = /** @type {anychart.core.SeriesBase} */(meta.series);
     var scale = meta.scale;
     if (scale && series) {
       var range = meta.range;
@@ -977,7 +977,7 @@ anychart.charts.HeatMap.prototype.getSeriesStatus = function(event) {
           var pixX = /** @type {number} */(iterator.meta('x'));
           var pixY = /** @type {number} */(iterator.meta('y'));
 
-          var length = Math.sqrt(Math.pow(pixX - x, 2) + Math.pow(pixY - y, 2));
+          var length = anychart.math.vectorLength(pixX, pixY, x, y);
           if (length <= spotRadius) {
             ind.push(index);
             if (length < minLength) {
@@ -1010,7 +1010,7 @@ anychart.charts.HeatMap.prototype.getSeriesStatus = function(event) {
           pixX = /** @type {number} */(iterator.meta('x'));
           pixY = /** @type {number} */(iterator.meta('y'));
 
-          length = Math.sqrt(Math.pow(pixX - x, 2) + Math.pow(pixY - y, 2));
+          length = anychart.math.vectorLength(pixX, pixY, x, y);
           if (length < minLength) {
             minLength = length;
             minLengthIndex = index[j];
@@ -1062,9 +1062,6 @@ anychart.charts.HeatMap.prototype.createSeries_ = function(data, opt_csvSettings
   instance.markers().setAutoZIndex(seriesZIndex + anychart.charts.HeatMap.ZINDEX_INCREMENT_MULTIPLIER / 2);
   instance.markers().setAutoFill((/** @type {anychart.core.heatMap.series.Base} */ (instance)).getMarkerFill());
   instance.markers().setAutoStroke(/** @type {acgraph.vector.Stroke} */((/** @type {anychart.core.heatMap.series.Base} */ (instance)).getMarkerStroke()));
-
-  if (anychart.DEFAULT_THEME != 'v6')
-    instance.labels().setAutoColor(anychart.color.darken(/** @type {(acgraph.vector.Fill|acgraph.vector.Stroke)} */(instance.color())));
 
   instance.a11y(/** @type {boolean|Object|undefined} */(anychart.getFullTheme(this.getType() + '.defaultSeriesSettings.base.a11y')));
 
@@ -1677,14 +1674,14 @@ anychart.charts.HeatMap.prototype.drawSeries_ = function() {
   hoverLabels = this.hoverLabels();
   selectLabels = this.selectLabels();
 
-  adjustFontSize = labels.adjustFontSize();
-  hoverAdjustFontSize = hoverLabels.adjustFontSize();
-  selectAdjustFontSize = selectLabels.adjustFontSize();
+  adjustFontSize = labels['adjustFontSize']();
+  hoverAdjustFontSize = hoverLabels['adjustFontSize']();
+  selectAdjustFontSize = selectLabels['adjustFontSize']();
 
-  var normalAdjustFontSizeSetting = (adjustFontSize['width'] || adjustFontSize['height']);
+  var normalAdjustFontSizeSetting = (!!adjustFontSize && (adjustFontSize['width'] || adjustFontSize['height']));
   needAdjustFontSize = normalAdjustFontSizeSetting && labels.enabled();
-  hoverNeedAdjustFontSize = (normalAdjustFontSizeSetting || hoverAdjustFontSize['width'] || hoverAdjustFontSize['height']) && (labels.enabled() || hoverLabels.enabled());
-  selectNeedAdjustFontSize = (normalAdjustFontSizeSetting || selectAdjustFontSize['width'] || selectAdjustFontSize['height']) && (labels.enabled() || selectLabels.enabled());
+  hoverNeedAdjustFontSize = (normalAdjustFontSizeSetting || (hoverAdjustFontSize && (hoverAdjustFontSize['width'] || hoverAdjustFontSize['height']))) && (labels.enabled() || hoverLabels.enabled());
+  selectNeedAdjustFontSize = (normalAdjustFontSizeSetting || (selectAdjustFontSize && (selectAdjustFontSize['width'] || selectAdjustFontSize['height']))) && (labels.enabled() || selectLabels.enabled());
 
   iterator = series.getResetIterator();
   var minFontSize, hoverMinFontSize, selectMinFontSize;
@@ -2110,7 +2107,8 @@ anychart.charts.HeatMap.prototype.data = function(opt_value, opt_csvSettings) {
   if (goog.isDef(opt_value)) {
     // handle HTML table data
     if (opt_value) {
-      if (opt_value['caption']) this.title(opt_value['caption']);
+      var title = opt_value['title'] || opt_value['caption'];
+      if (title) this.title(title);
       if (opt_value['rows']) opt_value = opt_value['rows'];
     }
     this.series_.data(opt_value, opt_csvSettings);
@@ -2301,9 +2299,9 @@ anychart.charts.HeatMap.prototype.setupByJSON = function(config, opt_default) {
   if ('data' in config)
     this.data(config['data'] || null);
 
-  this.labels().setup(config['labels']);
-  this.hoverLabels().setup(config['hoverLabels']);
-  this.selectLabels().setup(config['selectLabels']);
+  this.labels().setupByVal(config['labels'], opt_default);
+  this.hoverLabels().setupByVal(config['hoverLabels'], opt_default);
+  this.selectLabels().setupByVal(config['selectLabels'], opt_default);
 
   this.markers().setup(config['markers']);
   this.hoverMarkers().setup(config['hoverMarkers']);

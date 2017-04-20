@@ -861,6 +861,15 @@ anychart.charts.Stock.prototype.getCurrentMinDistance = function() {
 anychart.charts.Stock.prototype.getCurrentScrollerMinDistance = function() {
   return this.dataController_.getCurrentScrollerMinDistance();
 };
+
+
+/**
+ * Returns plots count.
+ * @return {number} Number of plots.
+ */
+anychart.charts.Stock.prototype.getPlotsCount = function() {
+  return this.plots_.length;
+};
 //endregion
 
 
@@ -1462,10 +1471,10 @@ anychart.charts.Stock.prototype.highlightAtRatio_ = function(ratio, clientX, cli
     }
     var grouping = /** @type {anychart.core.stock.Grouping} */(this.grouping());
     tooltip.showForSeriesPoints(points, clientX, clientY, null, false, {
-      'hoveredDate': value,
-      'dataIntervalUnit': grouping.getCurrentDataInterval()['unit'],
-      'dataIntervalUnitCount': grouping.getCurrentDataInterval()['count'],
-      'isGrouped': grouping.isGrouped()
+      'hoveredDate': {value: value, type: anychart.enums.TokenType.DATE_TIME},
+      'dataIntervalUnit': {value: grouping.getCurrentDataInterval()['unit'], type: anychart.enums.TokenType.STRING},
+      'dataIntervalUnitCount': {value: grouping.getCurrentDataInterval()['count'], type: anychart.enums.TokenType.NUMBER},
+      'isGrouped': {value: grouping.isGrouped()}
     });
   }
   //}
@@ -2070,4 +2079,5 @@ anychart.charts.Stock.prototype.toCsv = function(opt_chartDataExportMode, opt_cs
   proto['grouping'] = proto.grouping;
   proto['scrollerGrouping'] = proto.scrollerGrouping;
   proto['annotations'] = proto.annotations;
+  proto['getPlotsCount'] = proto.getPlotsCount;
 })();

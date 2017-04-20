@@ -18,13 +18,12 @@ goog.require('anychart.core.ui.Tooltip');
 goog.require('anychart.core.utils.Error');
 goog.require('anychart.core.utils.ISeriesWithError');
 goog.require('anychart.core.utils.InteractivityState');
-goog.require('anychart.core.utils.LegendContextProvider');
 goog.require('anychart.core.utils.LegendItemSettings');
 goog.require('anychart.core.utils.Padding');
 goog.require('anychart.core.utils.SeriesA11y');
-goog.require('anychart.core.utils.SeriesPointContextProvider');
 goog.require('anychart.core.utils.TokenParser');
 goog.require('anychart.enums');
+goog.require('anychart.format.Context');
 goog.require('anychart.math.Rect');
 goog.require('anychart.scales.IXScale');
 goog.require('anychart.utils');
@@ -133,6 +132,13 @@ anychart.core.series.Base = function(chart, plot, type, config) {
   this.a11y_ = null;
 
   /**
+   * An array of functions that calculate different parts of meta for the point.
+   * @type {Array.<Function>}
+   * @protected
+   */
+  this.metaMakers = [];
+
+  /**
    * Renderer.
    * @type {anychart.core.series.RenderingSettings}
    * @private
@@ -145,6 +151,7 @@ anychart.core.series.Base = function(chart, plot, type, config) {
 goog.inherits(anychart.core.series.Base, anychart.core.VisualBaseWithBounds);
 
 
+//region --- Class const
 /**
  * Consistency states supported by series.
  * @type {number}
@@ -175,6 +182,13 @@ anychart.core.series.Base.prototype.SUPPORTED_SIGNALS =
     anychart.Signal.NEEDS_UPDATE_A11Y;
 
 
+/**
+ * Labels z-index.
+ */
+anychart.core.series.Base.prototype.LABELS_ZINDEX = anychart.core.shapeManagers.LABELS_ZINDEX;
+
+
+//endregion
 //region --- Properties
 //----------------------------------------------------------------------------------------------------------------------
 //
@@ -453,9 +467,9 @@ anychart.core.series.Base.prototype.seriesType = function(opt_value) {
 /**
  * Getter/Setter for series type.
  * @param {anychart.core.series.TypeConfig} config
- * @param {boolean=} opt_default Apply default config.
+ * @param {boolean=} opt_reapplyClip Reapply clip and zIndex config.
  */
-anychart.core.series.Base.prototype.applyConfig = function(config, opt_default) {
+anychart.core.series.Base.prototype.applyConfig = function(config, opt_reapplyClip) {
   if (this.config) {
     if (this.rootLayer) {
       // if prev config used own root and the next one doesn't - we should dispose the root layer
@@ -467,6 +481,9 @@ anychart.core.series.Base.prototype.applyConfig = function(config, opt_default) 
     }
   }
   this.config = config;
+
+  this.tooltipContext = null;
+  this.legendProvider = null;
 
   goog.dispose(this.drawer);
   this.drawer = /** @type {!anychart.core.drawers.Base} */(new anychart.core.drawers.AvailableDrawers[config.drawerType](this));
@@ -484,7 +501,7 @@ anychart.core.series.Base.prototype.applyConfig = function(config, opt_default) 
   this.autoSettings['xPointPosition'] = 0.5;
 
   this.suspendSignalsDispatching();
-  this.applyDefaultsToElements(this.defaultSettings, true, opt_default);
+  this.applyDefaultsToElements(this.defaultSettings, true, true, opt_reapplyClip);
   this.resumeSignalsDispatching(false);
   // here should markers/labels/errors/outliers setup be
 
@@ -513,12 +530,13 @@ anychart.core.series.Base.prototype.recreateShapeManager = function() {
  * @param {Object} defaults
  * @param {boolean=} opt_resetLegendItem Temporary flag.
  * @param {boolean=} opt_default
+ * @param {boolean=} opt_reapplyClip
  */
-anychart.core.series.Base.prototype.applyDefaultsToElements = function(defaults, opt_resetLegendItem, opt_default) {
+anychart.core.series.Base.prototype.applyDefaultsToElements = function(defaults, opt_resetLegendItem, opt_default, opt_reapplyClip) {
   if (this.supportsLabels()) {
-    this.labels().setup(defaults['labels']);
-    this.hoverLabels().setup(defaults['hoverLabels']);
-    this.selectLabels().setup(defaults['selectLabels']);
+    this.labels().setupByVal(defaults['labels'], opt_default);
+    this.hoverLabels().setupByVal(defaults['hoverLabels'], opt_default);
+    this.selectLabels().setupByVal(defaults['selectLabels'], opt_default);
   }
 
   if (this.supportsMarkers()) {
@@ -540,10 +558,14 @@ anychart.core.series.Base.prototype.applyDefaultsToElements = function(defaults,
     this.legendItem().reset();
   this.legendItem().setup(defaults['legendItem']);
 
-  if ('tooltip' in defaults)
+  if ('tooltip' in defaults) {
     this.tooltip().setupByVal(defaults['tooltip'], opt_default);
+  }
 
-  if (!!opt_default) {
+  if (!goog.isDef(opt_reapplyClip))
+    opt_reapplyClip = opt_default;
+
+  if (!!opt_reapplyClip) {
     this.clip(defaults['clip']);
     this.zIndex(defaults['zIndex']);
   }
@@ -854,6 +876,16 @@ anychart.core.series.Base.prototype.hasOwnLayer = function() {
 };
 
 
+/**
+ * If the series zero line is complex (not a straight line or single point).
+ * Needed in Area and PolarArea drawers.
+ * @return {boolean}
+ */
+anychart.core.series.Base.prototype.hasComplexZero = function() {
+  return this.planIsStacked();
+};
+
+
 //endregion
 //region --- Infrastructure
 //----------------------------------------------------------------------------------------------------------------------
@@ -912,7 +944,6 @@ anychart.core.series.Base.prototype.setAutoPointWidth = function(value) {
  */
 anychart.core.series.Base.prototype.setAutoColor = function(value) {
   this.autoSettings['color'] = value;
-  this.labels().setAutoColor(this.getLabelsColor());
   this.markers().setAutoFill(this.getMarkerFill());
   this.markers().setAutoStroke(this.getMarkerStroke());
   this.outlierMarkers().setAutoFill(this.getOutliersFill());
@@ -977,6 +1008,7 @@ anychart.core.series.Base.prototype.setAutoHatchFill = function(value) {
 anychart.core.series.Base.prototype.axesLinesSpace = function(opt_spaceOrTopOrTopAndBottom, opt_rightOrRightAndLeft, opt_bottom, opt_left) {
   if (!this.axesLinesSpace_) {
     this.axesLinesSpace_ = new anychart.core.utils.Padding();
+    this.axesLinesSpace_.set(0);
     this.registerDisposable(this.axesLinesSpace_);
   }
 
@@ -1105,6 +1137,14 @@ anychart.core.series.Base.prototype.getRootLayer = function() {
 anychart.core.series.Base.prototype.getChart = function() {
   return /** @type {anychart.core.SeparateChart} */(this.chart);
 };
+
+
+/**
+ * Gets wrapped point by index.
+ * @param {number} index Point index.
+ * @return {anychart.core.Point} Wrapped point.
+ */
+anychart.core.series.Base.prototype.getPoint = goog.abstractMethod;
 
 
 //endregion
@@ -1461,10 +1501,10 @@ anychart.core.series.Base.prototype.onLegendItemSignal = function(event) {
 
 /**
  * Creates legend item data.
- * @param {Function|string} itemsTextFormatter Items text formatter.
+ * @param {Function|string} itemsFormat Items text formatter.
  * @return {!anychart.core.ui.Legend.LegendItemProvider} Color for legend item.
  */
-anychart.core.series.Base.prototype.getLegendItemData = function(itemsTextFormatter) {
+anychart.core.series.Base.prototype.getLegendItemData = function(itemsFormat) {
   var legendItem = this.legendItem();
   legendItem.markAllConsistent();
 
@@ -1472,9 +1512,9 @@ anychart.core.series.Base.prototype.getLegendItemData = function(itemsTextFormat
   var baseColor = this.getOption('color');
   var context = this.createLegendContextProvider();
 
-  var formatter = json['text'] || itemsTextFormatter;
+  var formatter = json['text'] || itemsFormat;
   if (goog.isString(formatter))
-    formatter = anychart.core.utils.TokenParser.getInstance().getTextFormatter(formatter);
+    formatter = anychart.core.utils.TokenParser.getInstance().getFormat(formatter);
   json['text'] = goog.isFunction(formatter) ?
       formatter.call(context, context) :
       this.getLegendItemText(context);
@@ -1632,31 +1672,38 @@ anychart.core.series.Base.prototype.tooltip = function(opt_value) {
 //----------------------------------------------------------------------------------------------------------------------
 /**
  * Returns a color resolver for passed color names and type.
- * @param {?Array.<string>} colorNames
+ * @param {(Array.<string>|null|boolean)} colorNames
  * @param {anychart.enums.ColorType} colorType
- * @return {function(anychart.core.series.Base, number, boolean=):acgraph.vector.AnyColor}
+ * @return {function(anychart.core.series.Base, number, boolean=, boolean=):acgraph.vector.AnyColor}
  */
 anychart.core.series.Base.getColorResolver = function(colorNames, colorType) {
+  var result;
   if (!colorNames) return anychart.core.series.Base.getNullColor_;
-  var hash = colorType + '|' + colorNames.join('|');
-  var result = anychart.core.series.Base.colorResolversCache_[hash];
-  if (!result) {
-    /** @type {!Function} */
-    var normalizerFunc;
-    switch (colorType) {
-      case anychart.enums.ColorType.STROKE:
-        normalizerFunc = anychart.core.settings.strokeOrFunctionSimpleNormalizer;
-        break;
-      case anychart.enums.ColorType.HATCH_FILL:
-        normalizerFunc = anychart.core.settings.hatchFillOrFunctionSimpleNormalizer;
-        break;
-      default:
-      case anychart.enums.ColorType.FILL:
-        normalizerFunc = anychart.core.settings.fillOrFunctionSimpleNormalizer;
-        break;
+  if (goog.isArray(colorNames)) {
+    var hash = colorType + '|' + colorNames.join('|');
+    result = anychart.core.series.Base.colorResolversCache_[hash];
+    if (!result) {
+      /** @type {!Function} */
+      var normalizerFunc;
+      switch (colorType) {
+        case anychart.enums.ColorType.STROKE:
+          normalizerFunc = anychart.core.settings.strokeOrFunctionSimpleNormalizer;
+          break;
+        case anychart.enums.ColorType.HATCH_FILL:
+          normalizerFunc = anychart.core.settings.hatchFillOrFunctionSimpleNormalizer;
+          break;
+        default:
+        case anychart.enums.ColorType.FILL:
+          normalizerFunc = anychart.core.settings.fillOrFunctionSimpleNormalizer;
+          break;
+      }
+      anychart.core.series.Base.colorResolversCache_[hash] = result = goog.partial(anychart.core.series.Base.getColor_,
+          colorNames, normalizerFunc, colorType == anychart.enums.ColorType.HATCH_FILL);
     }
-    anychart.core.series.Base.colorResolversCache_[hash] = result = goog.partial(anychart.core.series.Base.getColor_,
-        colorNames, normalizerFunc, colorType == anychart.enums.ColorType.HATCH_FILL);
+  } else {
+    result = anychart.core.series.Base.colorResolversCache_['transparent'];
+    if (!result)
+      result = anychart.core.series.Base.colorResolversCache_['transparent'] = function() {return anychart.color.TRANSPARENT_HANDLER};
   }
   return result;
 };
@@ -1670,10 +1717,11 @@ anychart.core.series.Base.getColorResolver = function(colorNames, colorType) {
  * @param {anychart.core.series.Base} series
  * @param {number} state
  * @param {boolean=} opt_ignorePointSettings
+ * @param {boolean=} opt_ignoreColorScale
  * @return {acgraph.vector.Fill|acgraph.vector.Stroke|acgraph.vector.PatternFill}
  * @private
  */
-anychart.core.series.Base.getColor_ = function(colorNames, normalizer, isHatchFill, series, state, opt_ignorePointSettings) {
+anychart.core.series.Base.getColor_ = function(colorNames, normalizer, isHatchFill, series, state, opt_ignorePointSettings, opt_ignoreColorScale) {
   var stateColor, context;
   state = anychart.core.utils.InteractivityState.clarifyState(state);
   if (state != anychart.PointState.NORMAL && colorNames.length > 1) {
@@ -1700,11 +1748,14 @@ anychart.core.series.Base.getColor_ = function(colorNames, normalizer, isHatchFi
   if (goog.isFunction(color)) {
     context = isHatchFill ?
         series.getHatchFillResolutionContext(opt_ignorePointSettings) :
-        series.getColorResolutionContext(void 0, opt_ignorePointSettings);
+        series.getColorResolutionContext(void 0, opt_ignorePointSettings, opt_ignoreColorScale);
     color = /** @type {acgraph.vector.Fill|acgraph.vector.Stroke|acgraph.vector.PatternFill} */(normalizer(color.call(context, context)));
   }
   if (stateColor) { // it is a function and not a hatch fill here
-    context = series.getColorResolutionContext(/** @type {acgraph.vector.Fill|acgraph.vector.Stroke} */(color), opt_ignorePointSettings);
+    context = series.getColorResolutionContext(
+        /** @type {acgraph.vector.Fill|acgraph.vector.Stroke} */(color),
+        opt_ignorePointSettings,
+        opt_ignoreColorScale);
     color = normalizer(stateColor.call(context, context));
   }
   return /** @type {acgraph.vector.Fill|acgraph.vector.Stroke|acgraph.vector.PatternFill} */(color);
@@ -1726,6 +1777,7 @@ anychart.core.series.Base.getNullColor_ = function() {
  * This context is used to resolve a fill or stroke set as a function for current point.
  * @param {(acgraph.vector.Fill|acgraph.vector.Stroke)=} opt_baseColor
  * @param {boolean=} opt_ignorePointSettings Whether should take detached iterator.
+ * @param {boolean=} opt_ignoreColorScale Whether should use color scale.
  * @return {Object}
  */
 anychart.core.series.Base.prototype.getColorResolutionContext = goog.abstractMethod;
@@ -1891,6 +1943,15 @@ anychart.core.series.Base.prototype.resolveOption = function(name, point, normal
 //
 //----------------------------------------------------------------------------------------------------------------------
 /**
+ * Returns container for factory.
+ * @return {acgraph.vector.ILayer}
+ */
+anychart.core.series.Base.prototype.getFactoryContainer = function() {
+  return /** @type {acgraph.vector.ILayer} */(this.container());
+};
+
+
+/**
  * Prepares passed factory to be displayed. Returns true, if the factory SHOULD be drawn.
  * @param {anychart.core.ui.LabelsFactory|anychart.core.ui.MarkersFactory} factory
  * @param {boolean} stateFactoriesEnabled
@@ -1903,7 +1964,7 @@ anychart.core.series.Base.prototype.resolveOption = function(name, point, normal
 anychart.core.series.Base.prototype.prepareFactory = function(factory, stateFactoriesEnabled, hasPointSettings, isSupported, consistency) {
   factory.suspendSignalsDispatching();
   if (this.check(isSupported) && ((factory.enabled() !== false) || stateFactoriesEnabled || hasPointSettings)) {
-    factory.container(/** @type {acgraph.vector.ILayer} */(this.container()));
+    factory.container(this.getFactoryContainer());
     if (this.hasInvalidationState(consistency)) {
       factory.clear();
       factory.parentBounds(this.pixelBoundsCache);
@@ -1921,7 +1982,8 @@ anychart.core.series.Base.prototype.prepareFactory = function(factory, stateFact
 
 /**
  * Draws element(s) for point.
- * @param {Array.<function(this:anychart.core.series.Base):(anychart.core.ui.LabelsFactory|anychart.core.ui.MarkersFactory)>} factoryGetters
+ * @param {Array.<function(this:anychart.core.series.Base):(anychart.core.ui.LabelsFactory|anychart.core.ui.MarkersFactory)>} seriesFactoryGetters
+ * @param {Array.<function(this:anychart.core.IChart):(anychart.core.ui.LabelsFactory|anychart.core.ui.MarkersFactory)>} chartFactoryGetters
  * @param {Array.<string>} overrideNames
  * @param {boolean} hasPointOverrides
  * @param {boolean} isLabel
@@ -1931,7 +1993,7 @@ anychart.core.series.Base.prototype.prepareFactory = function(factory, stateFact
  * @return {anychart.core.ui.MarkersFactory.Marker|anychart.core.ui.LabelsFactory.Label|null}
  * @protected
  */
-anychart.core.series.Base.prototype.drawFactoryElement = function(factoryGetters, overrideNames, hasPointOverrides, isLabel, positionYs, point, state) {
+anychart.core.series.Base.prototype.drawFactoryElement = function(seriesFactoryGetters, chartFactoryGetters, overrideNames, hasPointOverrides, isLabel, positionYs, point, state) {
   var isDraw, positionProvider, i, indexes;
   var index = point.getIndex();
   if (positionYs) {
@@ -1939,13 +2001,15 @@ anychart.core.series.Base.prototype.drawFactoryElement = function(factoryGetters
     if (!indexes)
       indexes = this.indexToMarkerIndexes_[index] = [];
   }
-  var mainFactory = factoryGetters[0].call(this);
+  var mainFactory = seriesFactoryGetters[0].call(this);
+  var chartNormalFactory = chartFactoryGetters ? chartFactoryGetters[0].call(this.chart) : null;
 
-  var pointOverride, statePointOverride, stateFactory;
+  var pointOverride, statePointOverride, seriesStateFactory, chartStateFactory;
   if (point.meta('missing')) {
     isDraw = false;
     pointOverride = statePointOverride = undefined;
-    stateFactory = null;
+    seriesStateFactory = null;
+    chartStateFactory = null;
   } else {
     state = anychart.core.utils.InteractivityState.clarifyState(state);
 
@@ -1960,14 +2024,20 @@ anychart.core.series.Base.prototype.drawFactoryElement = function(factoryGetters
     var pointOverrideEnabled = pointOverride && goog.isDef(pointOverride['enabled']) ? pointOverride['enabled'] : null;
     var statePointOverrideEnabled = statePointOverride && goog.isDef(statePointOverride['enabled']) ? statePointOverride['enabled'] : null;
 
-    stateFactory = (state == anychart.PointState.NORMAL) ? null : factoryGetters[state].call(this);
+    seriesStateFactory = (state == anychart.PointState.NORMAL) ? null : seriesFactoryGetters[state].call(this);
+    chartStateFactory = (state == anychart.PointState.NORMAL || !chartFactoryGetters) ? null : chartFactoryGetters[state].call(this.chart);
 
     isDraw = goog.isNull(statePointOverrideEnabled) ? // has no state marker or null "enabled" in it ?
-        (!stateFactory || goog.isNull(stateFactory.enabled())) ? // has no state stateFactory or null "enabled" in it ?
-            goog.isNull(pointOverrideEnabled) ? // has no marker in point or null "enabled" in it ?
-                mainFactory.enabled() :
-                pointOverrideEnabled :
-            stateFactory.enabled() :
+        (!seriesStateFactory || goog.isNull(seriesStateFactory.enabled()) || !goog.isDef(seriesStateFactory.enabled())) ? // has no state stateFactory or null "enabled" in it ?
+            (!chartStateFactory || goog.isNull(chartStateFactory.enabled()) || !goog.isDef(chartStateFactory.enabled())) ? // has no state stateFactory or null "enabled" in it ?
+                goog.isNull(pointOverrideEnabled) ? // has no marker in point or null "enabled" in it ?
+                    goog.isNull(mainFactory.enabled()) || !goog.isDef(mainFactory.enabled()) ?
+                        chartNormalFactory ? chartNormalFactory.enabled() :
+                            null :
+                        mainFactory.enabled() :
+                    pointOverrideEnabled :
+                chartStateFactory.enabled() :
+            seriesStateFactory.enabled() :
         statePointOverrideEnabled;
   }
 
@@ -1979,23 +2049,33 @@ anychart.core.series.Base.prototype.drawFactoryElement = function(factoryGetters
         for (i = 0; i < positionYs.length; i++) {
           positionProvider = {'value': {'x': positionYs[i], 'y': x}};
           indexes[i] = this.drawSingleFactoryElement(mainFactory, indexes[i], positionProvider, formatProvider,
-              stateFactory, pointOverride, statePointOverride).getIndex();
+              chartNormalFactory, seriesStateFactory, chartStateFactory, pointOverride, statePointOverride).getIndex();
         }
       } else {
         for (i = 0; i < positionYs.length; i++) {
           positionProvider = {'value': {'x': x, 'y': positionYs[i]}};
           indexes[i] = this.drawSingleFactoryElement(mainFactory, indexes[i], positionProvider, formatProvider,
-              stateFactory, pointOverride, statePointOverride).getIndex();
+              chartNormalFactory, seriesStateFactory, chartStateFactory, pointOverride, statePointOverride).getIndex();
         }
       }
     } else {
-      var position = (statePointOverride && statePointOverride['position']) ||
-          (stateFactory && stateFactory.position()) ||
-          (pointOverride && pointOverride['position']) ||
-          mainFactory.position();
+      var statePointOverridePos = statePointOverride && goog.isDef(statePointOverride['position']) ? statePointOverride['position'] : void 0;
+      var seriesStateFactoryPos = seriesStateFactory && goog.isDef(seriesStateFactory['position']()) ? seriesStateFactory['position']() : void 0;
+      var chartStateFactoryPos = chartStateFactory && goog.isDef(chartStateFactory['position']()) ? chartStateFactory['position']() : void 0;
+      var pointOverridePos = pointOverride && goog.isDef(pointOverride['position']) ? pointOverride['position'] : void 0;
+      var seriesNormalFactoryPos = mainFactory && goog.isDef(mainFactory['position']()) ? mainFactory['position']() : void 0;
+
+      var position = goog.isDef(statePointOverridePos) ? statePointOverridePos :
+          goog.isDef(seriesStateFactoryPos) ? seriesStateFactoryPos :
+              goog.isDef(chartStateFactoryPos) ? chartStateFactoryPos :
+                  goog.isDef(pointOverridePos) ? pointOverridePos :
+                      goog.isDef(mainFactory) ? seriesNormalFactoryPos :
+                          goog.isDef(chartNormalFactory) ? chartNormalFactory['position']() :
+                              'auto';
+
       positionProvider = this.createPositionProvider(/** @type {anychart.enums.Position|string} */(position), true);
       return this.drawSingleFactoryElement(mainFactory, index, positionProvider, formatProvider,
-          stateFactory, pointOverride, statePointOverride, position);
+          chartNormalFactory, seriesStateFactory, chartStateFactory, pointOverride, statePointOverride, position);
     }
   } else {
     if (positionYs) {
@@ -2011,82 +2091,76 @@ anychart.core.series.Base.prototype.drawFactoryElement = function(factoryGetters
 
 
 /**
- *
- * @param {?anychart.enums.Position} position
- * @param {boolean} positiveDirection
- * @param {boolean} isVertical
- * @return {anychart.enums.Anchor}
+ * Returns the angle of positive (or negative) direction vector. Result is in degrees, zero is to the right, grows clockwise.
+ * @param {boolean} positive
+ * @return {number}
  */
-anychart.core.series.Base.prototype.flipAnchor = function(position, positiveDirection, isVertical) {
-  if (position === null) {
-    if (positiveDirection) {
-      if (isVertical) {
-        return anychart.enums.Anchor.LEFT_CENTER;
-      } else {
-        return anychart.enums.Anchor.CENTER_BOTTOM;
-      }
-    } else {
-      if (isVertical) {
-        return anychart.enums.Anchor.RIGHT_CENTER;
-      } else {
-        return anychart.enums.Anchor.CENTER_TOP;
-      }
-    }
-  } else {
-    switch (position) {
-      case anychart.enums.Position.LEFT_TOP:
-        return anychart.enums.Anchor.RIGHT_BOTTOM;
+anychart.core.series.Base.prototype.getDirectionAngle = function(positive) {
+  var isVertical = /** @type {boolean} */ (this.getOption('isVertical'));
+  if (this.yScale().inverted())
+    positive = !positive;
+  return isVertical ?
+      (positive ? 0 : 180) :
+      (positive ? 270 : 90);
+};
 
-      case anychart.enums.Position.LEFT_CENTER:
-        return anychart.enums.Anchor.RIGHT_CENTER;
 
-      case anychart.enums.Position.LEFT_BOTTOM:
-        return anychart.enums.Anchor.RIGHT_TOP;
-
-      case anychart.enums.Position.CENTER_TOP:
-        return anychart.enums.Anchor.CENTER_BOTTOM;
-
-      case anychart.enums.Position.CENTER:
-        return anychart.enums.Anchor.CENTER;
-
-      case anychart.enums.Position.CENTER_BOTTOM:
-        return anychart.enums.Anchor.CENTER_TOP;
-
-      case anychart.enums.Position.RIGHT_TOP:
-        return anychart.enums.Anchor.LEFT_BOTTOM;
-
-      case anychart.enums.Position.RIGHT_CENTER:
-        return anychart.enums.Anchor.LEFT_CENTER;
-
-      case anychart.enums.Position.RIGHT_BOTTOM:
-        return anychart.enums.Anchor.LEFT_TOP;
-
-      default:
-        return anychart.enums.Anchor.CENTER;
-    }
-  }
+/**
+ * Returns if the direction should be positive for passed position.
+ * @param {string} position
+ * @return {boolean}
+ */
+anychart.core.series.Base.prototype.checkDirectionIsPositive = function(position) {
+  var result;
+  if (position == 'low' || position == 'lowest')
+    result = false;
+  else if (position == 'high' || position == 'highest')
+    result = true;
+  else
+    result = (Number(this.getIterator().get(position)) || 0) >= 0;
+  return result;
 };
 
 
 /**
  * Resolves anchor in auto mode.
  * @param {?anychart.enums.Position|string} position Position.
- * @param {anychart.core.ui.LabelsFactory.Label} element Label.
  * @return {anychart.enums.Anchor}
  */
-anychart.core.series.Base.prototype.resolveAutoAnchor = function(position, element) {
-  var iterator = this.getIterator();
-
+anychart.core.series.Base.prototype.resolveAutoAnchor = function(position) {
   var normalizedPosition = anychart.enums.normalizePosition(position, null);
-  var valueNames = this.getYValueNames();
-  var value = /** @type {string} */ (normalizedPosition == null ? position : valueNames[valueNames.length - 1]);
+  var result;
+  if (normalizedPosition) {
+    result = anychart.utils.flipAnchor(normalizedPosition);
+  } else {
+    var positive = this.checkDirectionIsPositive(/** @type {string} */(position));
+    var angle = this.getDirectionAngle(positive);
+    result = anychart.utils.getAnchorForAngle(angle);
+  }
+  return result;
+};
 
-  var isVertical = /** @type {boolean} */ (this.getOption('isVertical'));
-  var positiveDirection = (/** @type {number} */ (iterator.get(value)) || 0) >= 0;
-  var flippedAnchor = this.flipAnchor(normalizedPosition, positiveDirection, isVertical);
-  element.autoAnchor(flippedAnchor);
-  element.autoVertical(isVertical);
-  return flippedAnchor;
+
+/**
+ * Checks if label bounds intersect series bounds and flips autoAnchor if needed.
+ * @param {anychart.core.ui.LabelsFactory} factory
+ * @param {anychart.core.ui.LabelsFactory.Label} label
+ */
+anychart.core.series.Base.prototype.checkBoundsCollision = function(factory, label) {
+  // reserved for 7.14.0
+  // var bounds = factory.measure(label);
+  // var anchor = /** @type {anychart.enums.Anchor} */(label.autoAnchor());
+  // if (this.getOption('isVertical')) {
+  //   if (anychart.utils.isRightAnchor(anchor) && bounds.left < this.pixelBoundsCache.left ||
+  //       anychart.utils.isLeftAnchor(anchor) && (bounds.left + bounds.width > this.pixelBoundsCache.left + this.pixelBoundsCache.width)) {
+  //     label.autoAnchor(anychart.utils.flipAnchorHorizontal(anchor));
+  //   }
+  // } else {
+  //   if (anychart.utils.isBottomAnchor(anchor) && bounds.top < this.pixelBoundsCache.top ||
+  //       anychart.utils.isTopAnchor(anchor) && (bounds.top + bounds.height > this.pixelBoundsCache.top + this.pixelBoundsCache.height)) {
+  //     label.autoAnchor(anychart.utils.flipAnchorVertical(anchor));
+  //   }
+  // }
 };
 
 
@@ -2096,14 +2170,16 @@ anychart.core.series.Base.prototype.resolveAutoAnchor = function(position, eleme
  * @param {number|undefined} index
  * @param {*} positionProvider
  * @param {*} formatProvider
- * @param {anychart.core.ui.MarkersFactory|anychart.core.ui.LabelsFactory|null} stateFactory
+ * @param {anychart.core.ui.MarkersFactory|anychart.core.ui.LabelsFactory|null} chartNormalFactory
+ * @param {anychart.core.ui.MarkersFactory|anychart.core.ui.LabelsFactory|null} seriesStateFactory
+ * @param {anychart.core.ui.MarkersFactory|anychart.core.ui.LabelsFactory|null} chartStateFactory
  * @param {*} pointOverride
  * @param {*} statePointOverride
  * @param {(?anychart.enums.Position|string)=} opt_position Position which is needed to calculate label auto anchor.
  * @return {anychart.core.ui.MarkersFactory.Marker|anychart.core.ui.LabelsFactory.Label}
  * @protected
  */
-anychart.core.series.Base.prototype.drawSingleFactoryElement = function(factory, index, positionProvider, formatProvider, stateFactory, pointOverride, statePointOverride, opt_position) {
+anychart.core.series.Base.prototype.drawSingleFactoryElement = function(factory, index, positionProvider, formatProvider, chartNormalFactory, seriesStateFactory, chartStateFactory, pointOverride, statePointOverride, opt_position) {
   var element = formatProvider ? factory.getLabel(/** @type {number} */(index)) : factory.getMarker(/** @type {number} */(index));
   if (element) {
     if (formatProvider)
@@ -2116,14 +2192,31 @@ anychart.core.series.Base.prototype.drawSingleFactoryElement = function(factory,
       element = factory.add(positionProvider, index);
   }
   element.resetSettings();
-  if (goog.isDef(opt_position) && formatProvider) {
-    this.resolveAutoAnchor(opt_position, element);
+  if (formatProvider) {
+    var label = /** @type {anychart.core.ui.LabelsFactory.Label} */(element);
+    label.state('pointState', goog.isObject(statePointOverride) ? statePointOverride : null);
+    label.state('seriesState', seriesStateFactory);
+    label.state('chartState', chartStateFactory);
+    label.state('pointNormal', goog.isObject(pointOverride) ? pointOverride : null);
+    label.state('seriesNormal', factory);
+    label.state('chartNormal', chartNormalFactory);
+    label.state('seriesStateTheme', seriesStateFactory ? seriesStateFactory.themeSettings : null);
+    label.state('chartStateTheme', chartStateFactory ? chartStateFactory.themeSettings : null);
+    label.state('auto', label.autoSettings);
+    label.state('seriesNormalTheme', factory.themeSettings);
+    label.state('chartNormalTheme', chartNormalFactory ? chartNormalFactory.themeSettings : null);
+
+    var anchor = label.getFinalSettings('anchor');
+    label.autoVertical(/** @type {boolean} */ (this.getOption('isVertical')));
+    if (goog.isDef(opt_position) && anchor == anychart.enums.Anchor.AUTO) {
+      label.autoAnchor(this.resolveAutoAnchor(opt_position));
+      this.checkBoundsCollision(/** @type {anychart.core.ui.LabelsFactory} */(factory), label);
+    }
+  } else {
+    element.currentMarkersFactory(seriesStateFactory || factory);
+    element.setSettings(/** @type {Object} */(pointOverride), /** @type {Object} */(statePointOverride));
   }
-  if (formatProvider)
-    element.currentLabelsFactory(stateFactory || factory);
-  else
-    element.currentMarkersFactory(stateFactory || factory);
-  element.setSettings(/** @type {Object} */(pointOverride), /** @type {Object} */(statePointOverride));
+
   element.draw();
   return element;
 };
@@ -2166,6 +2259,7 @@ anychart.core.series.Base.prototype.labels = function(opt_value) {
 anychart.core.series.Base.prototype.hoverLabels = function(opt_value) {
   if (!this.hoverLabels_) {
     this.hoverLabels_ = new anychart.core.ui.LabelsFactory();
+    this.hoverLabels_.markConsistent(anychart.ConsistencyState.ALL);
   }
 
   if (goog.isDef(opt_value)) {
@@ -2186,6 +2280,7 @@ anychart.core.series.Base.prototype.hoverLabels = function(opt_value) {
 anychart.core.series.Base.prototype.selectLabels = function(opt_value) {
   if (!this.selectLabels_) {
     this.selectLabels_ = new anychart.core.ui.LabelsFactory();
+    this.selectLabels_.markConsistent(anychart.ConsistencyState.ALL);
   }
 
   if (goog.isDef(opt_value)) {
@@ -2205,7 +2300,7 @@ anychart.core.series.Base.prototype.selectLabels = function(opt_value) {
  */
 anychart.core.series.Base.prototype.labelsInvalidated_ = function(event) {
   if (event.hasSignal(anychart.Signal.NEEDS_REDRAW)) {
-    this.invalidate(anychart.ConsistencyState.SERIES_LABELS, anychart.Signal.NEEDS_REDRAW);
+    this.invalidate(anychart.ConsistencyState.SERIES_LABELS, anychart.Signal.NEEDS_REDRAW | anychart.Signal.NEED_UPDATE_OVERLAP);
   }
 };
 
@@ -2220,6 +2315,7 @@ anychart.core.series.Base.prototype.drawLabel = function(point, pointState) {
   if (this.check(anychart.core.series.Capabilities.SUPPORTS_LABELS))
     point.meta('label', this.drawFactoryElement(
         [this.labels, this.hoverLabels, this.selectLabels],
+        [this.getChart().labels, this.getChart().hoverLabels, this.getChart().selectLabels],
         ['label', 'hoverLabel', 'selectLabel'],
         this.planHasPointLabels(),
         true,
@@ -2282,6 +2378,7 @@ anychart.core.series.Base.prototype.markers = function(opt_value) {
 anychart.core.series.Base.prototype.hoverMarkers = function(opt_value) {
   if (!this.hoverMarkers_) {
     this.hoverMarkers_ = new anychart.core.ui.MarkersFactory();
+    this.hoverMarkers_.markConsistent(anychart.ConsistencyState.ALL);
     // don't listen to it, for it will be reapplied at the next hover
   }
 
@@ -2302,6 +2399,7 @@ anychart.core.series.Base.prototype.hoverMarkers = function(opt_value) {
 anychart.core.series.Base.prototype.selectMarkers = function(opt_value) {
   if (!this.selectMarkers_) {
     this.selectMarkers_ = new anychart.core.ui.MarkersFactory();
+    this.selectMarkers_.markConsistent(anychart.ConsistencyState.ALL);
     // don't listen to it, for it will be reapplied at the next hover
   }
 
@@ -2337,6 +2435,7 @@ anychart.core.series.Base.prototype.drawMarker = function(point, pointState) {
   if (this.check(anychart.core.series.Capabilities.SUPPORTS_MARKERS))
     point.meta('marker', this.drawFactoryElement(
         [this.markers, this.hoverMarkers, this.selectMarkers],
+        null,
         ['marker', 'hoverMarker', 'selectMarker'],
         this.planHasPointMarkers(),
         false,
@@ -2355,7 +2454,7 @@ anychart.core.series.Base.prototype.getMarkerFill = function() {
   var fillGetter = anychart.core.series.Base.getColorResolver(
       [this.check(anychart.core.drawers.Capabilities.USES_STROKE_AS_FILL) ? 'stroke' : 'fill'],
       anychart.enums.ColorType.FILL);
-  var fill = /** @type {acgraph.vector.Fill} */(fillGetter(this, anychart.PointState.NORMAL, true));
+  var fill = /** @type {acgraph.vector.Fill} */(fillGetter(this, anychart.PointState.NORMAL, true, true));
   if (anychart.DEFAULT_THEME != 'v6')
     return /** @type {acgraph.vector.Fill} */(anychart.color.setOpacity(fill, 1, true));
   else
@@ -2467,6 +2566,7 @@ anychart.core.series.Base.prototype.drawPointOutliers = function(iterator, point
       outliers.length)
     this.drawFactoryElement(
         [this.outlierMarkers, this.hoverOutlierMarkers, this.selectOutlierMarkers],
+        null,
         ['outlierMarker', 'hoverOutlierMarker', 'selectOutlierMarker'],
         this.planHasPointOutliers(),
         false,
@@ -2637,6 +2737,15 @@ anychart.core.series.Base.prototype.a11y = function(opt_enabledOrJson) {
 
 
 /**
+ * Creates a11y text info.
+ * @return {Object}
+ */
+anychart.core.series.Base.prototype.createA11yTextInfo = function() {
+  return this.createTooltipContextProvider();
+};
+
+
+/**
  * Animation enabled change handler.
  * @private
  */
@@ -2662,8 +2771,9 @@ anychart.core.series.Base.prototype.draw = function() {
       this.hasInvalidationState(
           anychart.ConsistencyState.SERIES_MARKERS |
           anychart.ConsistencyState.SERIES_LABELS |
-          anychart.ConsistencyState.SERIES_OUTLIERS))
+          anychart.ConsistencyState.SERIES_OUTLIERS)) {
     this.setAutoColor(this.autoSettings['color']);
+  }
 
   if (this.hasInvalidationState(anychart.ConsistencyState.SERIES_SHAPE_MANAGER)) {
     this.recreateShapeManager();
@@ -2682,7 +2792,6 @@ anychart.core.series.Base.prototype.draw = function() {
     this.invalidate(anychart.ConsistencyState.SERIES_CLIP |
         anychart.ConsistencyState.SERIES_POINTS |
         anychart.ConsistencyState.SERIES_COLOR);
-    this.markConsistent(anychart.ConsistencyState.BOUNDS);
   }
 
   // calculating pixel positions
@@ -2708,9 +2817,8 @@ anychart.core.series.Base.prototype.draw = function() {
 
   // preparing to draw different series parts
   if (this.hasInvalidationState(COMMON_STATES)) {
-    this.categoryWidthCache = this.getCategoryWidth();
-    this.pointWidthCache = this.getPixelPointWidth();
     this.prepareRootLayer();
+    this.prepareAdditional();
     // we do not mark any states consistent here - we do it later.
   }
 
@@ -2719,7 +2827,7 @@ anychart.core.series.Base.prototype.draw = function() {
     stateFactoriesEnabled = /** @type {boolean} */(this.hoverLabels().enabled() || this.selectLabels().enabled());
     if (this.prepareFactory(factory, stateFactoriesEnabled, this.planHasPointLabels(),
             anychart.core.series.Capabilities.SUPPORTS_LABELS, anychart.ConsistencyState.SERIES_LABELS)) {
-      factory.setAutoZIndex(/** @type {number} */(this.zIndex() + anychart.core.shapeManagers.LABELS_ZINDEX));
+      factory.setAutoZIndex(/** @type {number} */(this.zIndex() + this.LABELS_ZINDEX));
       // see DVF-2259
       factory.invalidate(anychart.ConsistencyState.Z_INDEX);
       elementsDrawers.push(this.drawLabel);
@@ -2769,13 +2877,7 @@ anychart.core.series.Base.prototype.draw = function() {
     var columns = this.retrieveDataColumns();
     var iterator;
     if (columns) {
-      if (this.needsZero()) {
-        var scale = /** @type {anychart.scales.Base} */(this.yScale());
-        this.zeroY = this.applyAxesLinesSpace(
-            this.applyRatioToBounds(
-                goog.math.clamp((scale && scale.transform(0, 0.5)) || 0, 0, 1),
-                false));
-      }
+      this.prepareMetaMakers();
       this.startDrawing();
 
       iterator = this.getResetIterator();
@@ -2809,7 +2911,7 @@ anychart.core.series.Base.prototype.draw = function() {
     } else {
       iterator = this.getResetIterator();
       while (iterator.advance()) {
-        this.makeMissing(iterator, this.getYValueNames());
+        this.makeMissing(iterator, this.getYValueNames(), NaN);
       }
     }
     this.markConsistent(anychart.ConsistencyState.SERIES_COLOR | anychart.ConsistencyState.Z_INDEX);
@@ -2852,10 +2954,11 @@ anychart.core.series.Base.prototype.draw = function() {
   }
 
   if (this.hasInvalidationState(anychart.ConsistencyState.A11Y)) {
-    //SeriesPointContextProvider is pretty suitable in this case.
-    this.a11y().applyA11y(this.createTooltipContextProvider());
+    this.a11y().applyA11y();
     this.markConsistent(anychart.ConsistencyState.A11Y);
   }
+
+  this.markConsistent(anychart.ConsistencyState.BOUNDS);
 
   this.resumeSignalsDispatching(false);
 
@@ -2915,6 +3018,16 @@ anychart.core.series.Base.prototype.prepareRootLayer = function() {
     this.shapeManager.clearShapes();
 
   this.shapeManager.setContainer(this.rootLayer);
+};
+
+
+/**
+ * Prepares additional properties.
+ * @protected
+ */
+anychart.core.series.Base.prototype.prepareAdditional = function() {
+  this.categoryWidthCache = this.getCategoryWidth();
+  this.pointWidthCache = this.getPixelPointWidth();
 };
 
 
@@ -3122,6 +3235,22 @@ anychart.core.series.Base.prototype.applyRatioToBounds = function(ratio, xDirect
 
 
 /**
+ * Transforms a single X ratio and an array of Y ratios to an array of coord pairs.
+ * @param {number} x
+ * @param {Array.<number>} ys
+ * @return {Array.<number>}
+ */
+anychart.core.series.Base.prototype.ratiosToPixelPairs = function(x, ys) {
+  var result = [];
+  var xPix = this.applyRatioToBounds(x, true);
+  for (var i = 0; i < ys.length; i++) {
+    result.push(xPix, this.applyRatioToBounds(ys[i], false));
+  }
+  return result;
+};
+
+
+/**
  * Applies axes lines info to passed pixel value.
  * @param {number} value
  * @return {number}
@@ -3150,90 +3279,223 @@ anychart.core.series.Base.prototype.considerMetaEmpty = function() {
 
 
 /**
+ * Makes passed row missing.
+ * @param {anychart.data.IRowInfo} rowInfo
+ * @param {Array.<string>} yNames
+ * @param {number} xRatio
+ * @protected
+ */
+anychart.core.series.Base.prototype.makeMissing = function(rowInfo, yNames, xRatio) {
+  var xPix = this.applyRatioToBounds(xRatio, true);
+  rowInfo.meta('x', xPix);
+  for (var i = 0; i < yNames.length; i++) {
+    rowInfo.meta(yNames[i], undefined);
+    rowInfo.meta(yNames[i] + 'X', xPix);
+  }
+};
+
+
+/**
+ * Populates rowInfo meta with points pixel positions.
+ * @param {anychart.data.IRowInfo} rowInfo
+ * @param {Object.<string, number>} map
+ * @param {number} xRatio
+ */
+anychart.core.series.Base.prototype.makePointsMetaFromMap = function(rowInfo, map, xRatio) {
+  var names = [];
+  var ys = [];
+  for (var i in map) {
+    names.push(i);
+    ys.push(map[i]);
+  }
+  var points = this.ratiosToPixelPairs(xRatio, ys);
+  for (var j = 0; j < names.length; j++) {
+    rowInfo.meta(names[j] + 'X', points[j * 2]);
+    rowInfo.meta(names[j], points[j * 2 + 1]);
+  }
+  rowInfo.meta('x', points[0]);
+};
+
+
+/**
+ * Prepares Stacked part of point meta.
+ * @param {anychart.data.IRowInfo} rowInfo
+ * @param {Array.<string>} yNames
+ * @param {Array.<string|number>} yColumns
+ * @param {number} pointMissing
+ * @param {number} xRatio
+ * @return {number} - pointMissing updated value.
+ * @protected
+ */
+anychart.core.series.Base.prototype.makeStackedMeta = function(rowInfo, yNames, yColumns, pointMissing, xRatio) {
+  var yScale = /** @type {anychart.scales.Base} */(this.yScale());
+  var map = {
+    'value': yScale.transform(rowInfo.meta('stackedValue'), 0.5),
+    'zero': goog.math.clamp(yScale.transform(rowInfo.meta('stackedZero'), 0.5), 0, 1),
+    'prevValue': yScale.transform(rowInfo.meta('stackedValuePrev'), 0.5),
+    'prevZero': yScale.transform(rowInfo.meta('stackedZeroPrev'), 0.5),
+    'nextValue': yScale.transform(rowInfo.meta('stackedValueNext'), 0.5),
+    'nextZero': yScale.transform(rowInfo.meta('stackedZeroNext'), 0.5)
+  };
+  this.makePointsMetaFromMap(rowInfo, map, xRatio);
+  rowInfo.meta('zeroMissing', rowInfo.meta('stackedMissing'));
+  return pointMissing;
+};
+
+
+/**
+ * Prepares Unstacked part of point meta.
+ * @param {anychart.data.IRowInfo} rowInfo
+ * @param {Array.<string>} yNames
+ * @param {Array.<string|number>} yColumns
+ * @param {number} pointMissing
+ * @param {number} xRatio
+ * @return {number} - pointMissing updated value.
+ * @protected
+ */
+anychart.core.series.Base.prototype.makeUnstackedMeta = function(rowInfo, yNames, yColumns, pointMissing, xRatio) {
+  var yScale = /** @type {anychart.scales.Base} */(this.yScale());
+  var map = {};
+  for (var i = 0; i < yColumns.length; i++) {
+    var val = yScale.transform(yScale.applyComparison(rowInfo.getColumn(yColumns[i]), this.comparisonZero), 0.5);
+    if (isNaN(val)) pointMissing |= anychart.core.series.PointAbsenceReason.VALUE_FIELD_MISSING;
+    map[yNames[i]] = val;
+  }
+  this.makePointsMetaFromMap(rowInfo, map, xRatio);
+  return pointMissing;
+};
+
+
+/**
+ * Prepares Zero part of point meta.
+ * @param {anychart.data.IRowInfo} rowInfo
+ * @param {Array.<string>} yNames
+ * @param {Array.<string|number>} yColumns
+ * @param {number} pointMissing
+ * @param {number} xRatio
+ * @return {number} - pointMissing updated value.
+ * @protected
+ */
+anychart.core.series.Base.prototype.makeZeroMeta = function(rowInfo, yNames, yColumns, pointMissing, xRatio) {
+  rowInfo.meta('zeroX', rowInfo.meta('x'));
+  rowInfo.meta('zero', this.zeroY);
+  rowInfo.meta('zeroMissing', false);
+  return pointMissing;
+};
+
+
+/**
+ * Prepares outliers part of point meta.
+ * @param {anychart.data.IRowInfo} rowInfo
+ * @param {Array.<string>} yNames
+ * @param {Array.<string|number>} yColumns
+ * @param {number} pointMissing
+ * @param {number} xRatio
+ * @return {number} - pointMissing updated value.
+ * @protected
+ */
+anychart.core.series.Base.prototype.makeSizeMeta = function(rowInfo, yNames, yColumns, pointMissing, xRatio) {
+  // negative sizes should be filtered out on drawing plan calculation stage
+  // by settings missing reason VALUE_FIELD_MISSING
+  rowInfo.meta('size', this.calculateSize(Number(rowInfo.get('size'))));
+  return pointMissing;
+};
+
+
+/**
+ * Prepares outliers part of point meta.
+ * @param {anychart.data.IRowInfo} rowInfo
+ * @param {Array.<string>} yNames
+ * @param {Array.<string|number>} yColumns
+ * @param {number} pointMissing
+ * @param {number} xRatio
+ * @return {number} - pointMissing updated value.
+ * @protected
+ */
+anychart.core.series.Base.prototype.makeOutliersMeta = function(rowInfo, yNames, yColumns, pointMissing, xRatio) {
+  var yScale = /** @type {anychart.scales.Base} */(this.yScale());
+  var outliers = [];
+  var outliersSource = rowInfo.get('outliers');
+  if (goog.isArray(outliersSource)) {
+    for (var i = 0; i < outliersSource.length; i++) {
+      if (!yScale.isMissing(outliersSource[i]))
+        outliers.push(
+            this.applyRatioToBounds(
+                yScale.transform(
+                    yScale.applyComparison(
+                        outliersSource[i],
+                        this.comparisonZero),
+                    0.5),
+                false));
+    }
+  }
+  rowInfo.meta('outliers', outliers);
+  return pointMissing;
+};
+
+
+/**
+ * Prepares meta makers pipe.
+ * @protected
+ */
+anychart.core.series.Base.prototype.prepareMetaMakers = function() {
+  this.metaMakers.length = 0;
+  if (this.planIsStacked()) {
+    this.metaMakers.push(this.makeStackedMeta);
+  } else {
+    this.metaMakers.push(this.makeUnstackedMeta);
+    if (this.needsZero()) {
+      this.metaMakers.push(this.makeZeroMeta);
+    }
+  }
+  if (this.isSizeBased()) {
+    this.metaMakers.push(this.makeSizeMeta);
+  }
+  if (this.supportsOutliers()) {
+    this.metaMakers.push(this.makeOutliersMeta);
+  }
+  if (this.needsZero()) {
+    var scale = /** @type {anychart.scales.Base} */(this.yScale());
+    this.zeroYRatio = goog.math.clamp((scale && scale.transform(0, 0.5)) || 0, 0, 1);
+    this.zeroY = this.applyAxesLinesSpace(this.applyRatioToBounds(this.zeroYRatio, false));
+  }
+};
+
+
+/**
+ * Fetches correct xPointPosition.
+ * @return {number}
+ */
+anychart.core.series.Base.prototype.getXPointPosition = function() {
+  return /** @type {number} */(this.getOption('xPointPosition'));
+};
+
+
+/**
  * Calculates pixel value
  * @param {anychart.data.IRowInfo} rowInfo
  * @param {Array.<string>} yNames
  * @param {Array.<string|number>} yColumns
+ * @protected
  */
 anychart.core.series.Base.prototype.makePointMeta = function(rowInfo, yNames, yColumns) {
-  var i;
   var pointMissing = this.considerMetaEmpty() ?
       0 :
       (Number(rowInfo.meta('missing')) || 0) & ~anychart.core.series.PointAbsenceReason.OUT_OF_RANGE;
   if (!this.isPointVisible(rowInfo))
     pointMissing |= anychart.core.series.PointAbsenceReason.OUT_OF_RANGE;
-  rowInfo.meta('x',
-      this.applyRatioToBounds(
-          this.getXScale().transformInternal(
-              rowInfo.getX(),
-              rowInfo.getIndex(),
-              /** @type {number} */(this.getOption('xPointPosition'))), true));
-  if (!!pointMissing) {
-    this.makeMissing(rowInfo, yNames);
+  var xRatio = this.getXScale().transformInternal(
+      rowInfo.getX(),
+      rowInfo.getIndex(),
+      this.getXPointPosition());
+  if (pointMissing) {
+    this.makeMissing(rowInfo, yNames, xRatio);
   } else {
-    var yScale = /** @type {anychart.scales.Base} */(this.yScale());
-    var val;
-    if (this.planIsStacked()) {
-      val = yScale.transform(rowInfo.meta('stackedValue'), 0.5);
-      if (isNaN(val)) pointMissing = false;
-      rowInfo.meta('value', this.applyRatioToBounds(val, false));
-      val = yScale.transform(rowInfo.meta('stackedZero'), 0.5);
-      if (isNaN(val)) pointMissing = false;
-      rowInfo.meta('zero', this.applyRatioToBounds(goog.math.clamp(val, 0, 1), false));
-      rowInfo.meta('zeroMissing', rowInfo.meta('stackedMissing'));
-      rowInfo.meta('prevValue', this.applyRatioToBounds(yScale.transform(rowInfo.meta('stackedValuePrev'), 0.5), false));
-      rowInfo.meta('prevZero', this.applyRatioToBounds(yScale.transform(rowInfo.meta('stackedZeroPrev'), 0.5), false));
-      rowInfo.meta('nextValue', this.applyRatioToBounds(yScale.transform(rowInfo.meta('stackedValueNext'), 0.5), false));
-      rowInfo.meta('nextZero', this.applyRatioToBounds(yScale.transform(rowInfo.meta('stackedZeroNext'), 0.5), false));
-    } else {
-      if (this.needsZero()) {
-        rowInfo.meta('zero', this.zeroY);
-        rowInfo.meta('zeroMissing', false);
-      }
-      for (i = 0; i < yColumns.length; i++) {
-        val = yScale.transform(yScale.applyComparison(rowInfo.getColumn(yColumns[i]), this.comparisonZero), 0.5);
-        if (isNaN(val)) pointMissing |= anychart.core.series.PointAbsenceReason.VALUE_FIELD_MISSING;
-        rowInfo.meta(yNames[i], this.applyRatioToBounds(val, false));
-      }
-    }
-    if (this.isSizeBased()) {
-      // negative sizes should be filtered out on drawing plan calculation stage
-      // by settings missing reason VALUE_FIELD_MISSING
-      rowInfo.meta('size', this.calculateSize(Number(rowInfo.get('size'))));
-    }
-    if (this.supportsOutliers()) {
-      var outliers = [];
-      var outliersSource = rowInfo.get('outliers');
-      if (goog.isArray(outliersSource)) {
-        for (i = 0; i < outliersSource.length; i++) {
-          if (!yScale.isMissing(outliersSource[i]))
-            outliers.push(
-                this.applyRatioToBounds(
-                    yScale.transform(
-                        yScale.applyComparison(
-                            outliersSource[i],
-                            this.comparisonZero),
-                        0.5),
-                    false));
-        }
-      }
-      rowInfo.meta('outliers', outliers);
+    for (var i = 0; i < this.metaMakers.length; i++) {
+      pointMissing = this.metaMakers[i].call(this, rowInfo, yNames, yColumns, pointMissing, xRatio);
     }
   }
   rowInfo.meta('missing', pointMissing);
-};
-
-
-/**
- * Makes passed row missing.
- * @param {anychart.data.IRowInfo} rowInfo
- * @param {Array.<string>} yNames
- */
-anychart.core.series.Base.prototype.makeMissing = function(rowInfo, yNames) {
-  // rowInfo.meta('x', undefined);
-  for (var i = 0; i < yNames.length; i++) {
-    rowInfo.meta(yNames[i], undefined);
-  }
 };
 
 
@@ -3245,32 +3507,98 @@ anychart.core.series.Base.prototype.makeMissing = function(rowInfo, yNames) {
 //
 //----------------------------------------------------------------------------------------------------------------------
 /**
+ * Applies required data to format context.
+ * @param {anychart.format.Context} provider - Format context.
+ * @param {anychart.data.IRowInfo=} opt_rowInfo - Data source.
+ * @return {anychart.format.Context} - Updated format context.
+ */
+anychart.core.series.Base.prototype.updateContext = function(provider, opt_rowInfo) {
+  var rowInfo = opt_rowInfo || this.getIterator();
+  var scale = this.getXScale();
+  var values = {
+    'chart': {value: this.getChart(), type: anychart.enums.TokenType.UNKNOWN},
+    'series': {value: this, type: anychart.enums.TokenType.UNKNOWN},
+    'xScale': {value: scale, type: anychart.enums.TokenType.UNKNOWN},
+    'index': {value: rowInfo.getIndex(), type: anychart.enums.TokenType.NUMBER},
+    'x': {value: rowInfo.get('x'), type: anychart.enums.TokenType.STRING},
+    'seriesName': {value: this.name(), type: anychart.enums.TokenType.STRING},
+  };
+
+  if (scale && goog.isFunction(scale.getType))
+    values['xScaleType'] = {value: scale.getType(), type: anychart.enums.TokenType.STRING};
+
+  if (this.isSizeBased())
+    values['size'] = {value: rowInfo.get('size'), type: anychart.enums.TokenType.NUMBER};
+
+  if (this.supportsError()) {
+    /** @type {anychart.core.utils.ISeriesWithError} */
+    var series = /** @type {anychart.core.utils.ISeriesWithError} */(this);
+    /** @type {anychart.enums.ErrorMode} */
+    var mode = /** @type {anychart.enums.ErrorMode} */(series.error().mode());
+    var error;
+    if (mode == anychart.enums.ErrorMode.BOTH || mode == anychart.enums.ErrorMode.VALUE) {
+      error = series.getErrorValues(false);
+      values['valueLowerError'] = {value: error[0], type: anychart.enums.TokenType.NUMBER};
+      values['valueUpperError'] = {value: error[1], type: anychart.enums.TokenType.NUMBER};
+    }
+    if (mode == anychart.enums.ErrorMode.BOTH || mode == anychart.enums.ErrorMode.X) {
+      error = series.getErrorValues(true);
+      values['xLowerError'] = {value: error[0], type: anychart.enums.TokenType.NUMBER};
+      values['xUpperError'] = {value: error[1], type: anychart.enums.TokenType.NUMBER};
+    }
+  }
+
+  var refValueNames = this.getYValueNames();
+  for (var i = 0; i < refValueNames.length; i++) {
+    var refName = refValueNames[i];
+    values[refName] = {value: rowInfo.get(refName), type: anychart.enums.TokenType.NUMBER};
+  }
+
+  var tokenAliases = {};
+  tokenAliases[anychart.enums.StringToken.BUBBLE_SIZE] = 'size';
+  tokenAliases[anychart.enums.StringToken.RANGE_START] = 'low';
+  tokenAliases[anychart.enums.StringToken.RANGE_END] = 'high';
+  tokenAliases[anychart.enums.StringToken.X_VALUE] = 'x';
+
+  var tokenCustomValues = {};
+  var diff = /** @type {number} */ (rowInfo.get('high')) - /** @type {number} */ (rowInfo.get('low'));
+  tokenCustomValues[anychart.enums.StringToken.RANGE] = {value: diff, type: anychart.enums.TokenType.NUMBER};
+  tokenCustomValues[anychart.enums.StringToken.NAME] = {value: rowInfo.get('name'), type: anychart.enums.TokenType.STRING};
+
+  provider
+      .statisticsSources([this.getPoint(rowInfo.getIndex()), this, this.getChart()])
+      .dataSource(rowInfo)
+      .tokenAliases(tokenAliases)
+      .tokenCustomValues(tokenCustomValues);
+
+  return /** @type {anychart.format.Context} */ (provider.propagate(values));
+};
+
+
+/**
  * Creates labels format provider.
  * @return {Object} Object with info for labels formatting.
  * @protected
  */
 anychart.core.series.Base.prototype.createLabelsContextProvider = function() {
-  var provider = new anychart.core.utils.SeriesPointContextProvider(this, this.getYValueNames(), this.supportsError());
-  provider.applyReferenceValues();
-  return provider;
+  return this.updateContext(new anychart.format.Context());
 };
 
 
 /**
  * Creates tooltip context provider.
- * @return {!anychart.core.utils.SeriesPointContextProvider}
+ * @return {anychart.format.Context}
  */
 anychart.core.series.Base.prototype.createTooltipContextProvider = function() {
   if (!this.tooltipContext) {
     /**
      * Tooltip context cache.
-     * @type {anychart.core.utils.SeriesPointContextProvider}
+     * @type {anychart.format.Context}
      * @protected
      */
-    this.tooltipContext = new anychart.core.utils.SeriesPointContextProvider(this, this.getYValueNames(), this.supportsError());
+    this.tooltipContext = new anychart.format.Context();
   }
-  this.tooltipContext.applyReferenceValues();
-  return this.tooltipContext;
+  return this.updateContext(this.tooltipContext);
 };
 
 
@@ -3280,14 +3608,81 @@ anychart.core.series.Base.prototype.createTooltipContextProvider = function() {
  * @protected
  */
 anychart.core.series.Base.prototype.createLegendContextProvider = function() {
-  if (!this.legendProvider) {
-    /**
-     * Legend context cache.
-     * @type {Object}
-     */
-    this.legendProvider = new anychart.core.utils.LegendContextProvider(this);
+  if (!this.legendProvider_)
+    this.legendProvider_ = new anychart.format.Context(void 0, void 0, [this, this.chart]);
+
+  var values = {
+    'series': {value: this, type: anychart.enums.TokenType.UNKNOWN},
+    'chart': {value: this.getChart(), type: anychart.enums.TokenType.UNKNOWN}
+  };
+  this.legendProvider_.statisticsSources([this, this.chart]);
+
+  return this.legendProvider_.propagate(values);
+};
+
+
+/**
+ * Creates position provider based on point geometry.
+ * @param {anychart.enums.Anchor} anchor
+ * @return {Object}
+ * @protected
+ */
+anychart.core.series.Base.prototype.createPositionProviderByGeometry = function(anchor) {
+  var iterator = this.getIterator();
+  var x = /** @type {number} */(iterator.meta('x'));
+  var top = /** @type {number} */(iterator.meta(this.config.anchoredPositionTop));
+  var bottom = /** @type {number} */(iterator.meta(this.config.anchoredPositionBottom));
+  var bounds = new anychart.math.Rect(x, Math.min(top, bottom), 0, Math.abs(bottom - top));
+  if (this.isWidthBased()) {
+    bounds.left -= this.pointWidthCache / 2;
+    bounds.width += this.pointWidthCache;
   }
-  return this.legendProvider;
+  if (this.isSizeBased()) {
+    var size = /** @type {number} */(iterator.meta('size'));
+    bounds.left -= size;
+    bounds.top -= size;
+    bounds.width += size + size;
+    bounds.height += size + size;
+  }
+  if (/** @type {boolean} */(this.getOption('isVertical'))) {
+    var tmp = bounds.left;
+    bounds.left = bounds.top;
+    bounds.top = tmp;
+    tmp = bounds.height;
+    bounds.height = bounds.width;
+    bounds.width = tmp;
+  }
+  return anychart.utils.getCoordinateByAnchor(bounds, /** @type {anychart.enums.Anchor} */(anchor));
+};
+
+
+/**
+ * Creates position provider based on data value.
+ * @param {string} position
+ * @return {Object}
+ * @protected
+ */
+anychart.core.series.Base.prototype.createPositionProviderByData = function(position) {
+  var iterator = this.getIterator();
+  var x = iterator.meta('x');
+  var val = iterator.meta(position);
+  if (!goog.isDef(val)) {
+    val = iterator.get(position);
+    if (goog.isDef(val)) {
+      if (this.planIsStacked()) {
+        val += iterator.meta('stackedZero');
+      }
+      val = this.transformY(val);
+    } else {
+      val = NaN;
+    }
+  }
+  var point;
+  if (/** @type {boolean} */(this.getOption('isVertical')))
+    point = {'x': val, 'y': x};
+  else
+    point = {'x': x, 'y': val};
+  return point;
 };
 
 
@@ -3298,54 +3693,15 @@ anychart.core.series.Base.prototype.createLegendContextProvider = function() {
  * @return {Object} Object with info for labels formatting.
  */
 anychart.core.series.Base.prototype.createPositionProvider = function(position, opt_shift3D) {
-  var iterator = this.getIterator();
   var point;
-  if (iterator.meta('missing')) {
+  if (this.getIterator().meta('missing')) {
     point = {'x': NaN, 'y': NaN};
   } else {
-    var x = /** @type {number} */(iterator.meta('x'));
-    var anchor = anychart.enums.normalizeAnchor(position, null);
+    var anchor = anychart.enums.normalizePosition(position, null);
     if (anchor) {
-      var top = /** @type {number} */(iterator.meta(this.config.anchoredPositionTop));
-      var bottom = /** @type {number} */(iterator.meta(this.config.anchoredPositionBottom));
-      var bounds = new anychart.math.Rect(x, Math.min(top, bottom), 0, Math.abs(bottom - top));
-      if (this.isWidthBased()) {
-        bounds.left -= this.pointWidthCache / 2;
-        bounds.width += this.pointWidthCache;
-      }
-      if (this.isSizeBased()) {
-        var size = /** @type {number} */(iterator.meta('size'));
-        bounds.left -= size;
-        bounds.top -= size;
-        bounds.width += size + size;
-        bounds.height += size + size;
-      }
-      if (/** @type {boolean} */(this.getOption('isVertical'))) {
-        var tmp = bounds.left;
-        bounds.left = bounds.top;
-        bounds.top = tmp;
-        tmp = bounds.height;
-        bounds.height = bounds.width;
-        bounds.width = tmp;
-      }
-      point = anychart.utils.getCoordinateByAnchor(bounds, /** @type {anychart.enums.Anchor} */(anchor));
+      point = this.createPositionProviderByGeometry(/** @type {anychart.enums.Anchor} */(anchor));
     } else {
-      var val = iterator.meta(position);
-      if (!goog.isDef(val)) {
-        val = iterator.get(position);
-        if (goog.isDef(val)) {
-          if (this.planIsStacked()) {
-            val += iterator.meta('stackedZero');
-          }
-          val = this.transformY(val);
-        } else {
-          val = NaN;
-        }
-      }
-      if (/** @type {boolean} */(this.getOption('isVertical')))
-        point = {'x': val, 'y': x};
-      else
-        point = {'x': x, 'y': val};
+      point = this.createPositionProviderByData(position);
     }
 
     if (opt_shift3D && this.check(anychart.core.drawers.Capabilities.IS_3D_BASED)) {
@@ -3360,10 +3716,10 @@ anychart.core.series.Base.prototype.createPositionProvider = function(position, 
 
 
 //endregion
-//region --- OptimizedProperties
+//region --- Optimized Properties
 //----------------------------------------------------------------------------------------------------------------------
 //
-//  OptimizedProperties
+//  Optimized Properties
 //
 //----------------------------------------------------------------------------------------------------------------------
 /**
@@ -3696,7 +4052,7 @@ anychart.core.series.Base.PROPERTY_DESCRIPTORS = (function() {
       anychart.enums.PropertyHandlerType.MULTI_ARG,
       'hoverHatchFill',
       anychart.core.settings.hatchFillOrFunctionNormalizer,
-      anychart.ConsistencyState.SERIES_COLOR | anychart.ConsistencyState.SERIES_POINTS,
+      0,
       0,
       anychart.core.series.Capabilities.ANY);
 
@@ -3704,7 +4060,7 @@ anychart.core.series.Base.PROPERTY_DESCRIPTORS = (function() {
       anychart.enums.PropertyHandlerType.MULTI_ARG,
       'selectHatchFill',
       anychart.core.settings.hatchFillOrFunctionNormalizer,
-      anychart.ConsistencyState.SERIES_COLOR | anychart.ConsistencyState.SERIES_POINTS,
+      0,
       0,
       anychart.core.series.Capabilities.ANY);
 
@@ -3932,10 +4288,10 @@ anychart.core.settings.populate(anychart.core.series.Base, anychart.core.series.
 anychart.core.series.Base.prototype.statistics = function(opt_name, opt_value) {
   if (goog.isDef(opt_name)) {
     if (goog.isDef(opt_value)) {
-      this.statistics_[opt_name] = opt_value;
+      this.statistics_[opt_name.toLowerCase()] = opt_value;
       return this;
     } else {
-      return this.statistics_[opt_name];
+      return this.statistics_[opt_name.toLowerCase()];
     }
   } else {
     return this.statistics_;
@@ -3956,7 +4312,7 @@ anychart.core.series.Base.prototype.calculateStatistics = goog.nullFunction;
  */
 anychart.core.series.Base.prototype.getStat = function(key) {
   this.chart.ensureStatisticsReady();
-  return this.statistics_[key];
+  return this.statistics(key);
 };
 
 
@@ -4039,6 +4395,12 @@ anychart.core.series.Base.prototype.setupByJSON = function(config, opt_default) 
   this.meta(config['meta']);
   this.clip(config['clip']);
   this.a11y(config['a11y']);
+
+  if (this.supportsLabels()) {
+    this.labels().setupByVal(config['labels'], opt_default);
+    this.hoverLabels().setupByVal(config['hoverLabels'], opt_default);
+    this.selectLabels().setupByVal(config['selectLabels'], opt_default);
+  }
 
   anychart.core.settings.deserialize(this, anychart.core.series.Base.PROPERTY_DESCRIPTORS, config);
 
@@ -4171,6 +4533,9 @@ anychart.core.series.Base.prototype.disposeInternal = function() {
 //size
 //hoverSize
 //selectSize
+//endSize;
+//startSize;
+//curvature;
 
 //endregion
 

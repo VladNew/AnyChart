@@ -122,7 +122,7 @@ anychart.core.ui.IInteractiveGrid.prototype.deleteKeyHandler = function(e) {};
  * @param {anychart.data.Tree.DataItem} dataItem - Data item.
  * @param {Object=} opt_period - Optional current period.
  * @param {number=} opt_periodIndex - Period index. Required is opt_period is set.
- * @return {!anychart.core.utils.GanttContextProvider} - Gantt context provider.
+ * @return {Object} - Gantt context provider.
  */
 anychart.core.ui.IInteractiveGrid.prototype.createFormatProvider = function(dataItem, opt_period, opt_periodIndex) {};
 
@@ -133,4 +133,12 @@ anychart.core.ui.IInteractiveGrid.prototype.createFormatProvider = function(data
  * @return {number|anychart.core.ui.IInteractiveGrid} - Current value or itself for chaining.
  */
 anychart.core.ui.IInteractiveGrid.prototype.defaultRowHeight = function(opt_value) {};
+
+
+/**
+ * Getter/setter for container.
+ * @param {(acgraph.vector.ILayer|string|Element)=} opt_value .
+ * @return {(acgraph.vector.ILayer|!anychart.core.VisualBase)} .
+ */
+anychart.core.ui.IInteractiveGrid.prototype.container = function(opt_value) {};
 

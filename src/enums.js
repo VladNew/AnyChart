@@ -489,6 +489,7 @@ anychart.enums.normalizeAnchor = function(value, opt_default) {
     case 'br':
       return anychart.enums.Anchor.RIGHT_BOTTOM;
     case 'auto':
+    case 'null':
       return anychart.enums.Anchor.AUTO;
   }
   return goog.isDef(opt_default) ? opt_default : anychart.enums.Anchor.LEFT_TOP;
@@ -1352,7 +1353,8 @@ anychart.enums.LabelsOverlapMode = {
   /**
    * Allows labels to overlap.
    */
-  ALLOW_OVERLAP: 'allowOverlap'
+  ALLOW_OVERLAP: 'allowOverlap',
+  AUTO_WIDTH: 'autoWidth'
 };
 
 
@@ -1360,9 +1362,10 @@ anychart.enums.LabelsOverlapMode = {
  * Normalizes labels overlap mode to enum values.
  * @param {*} value Mode to normalize.
  * @param {anychart.enums.LabelsOverlapMode=} opt_default Default value. Defaults to ALLOW_OVERLAP.
+ * @param {boolean=} opt_allowAutoWidth
  * @return {anychart.enums.LabelsOverlapMode}
  */
-anychart.enums.normalizeLabelsOverlapMode = function(value, opt_default) {
+anychart.enums.normalizeLabelsOverlapMode = function(value, opt_default, opt_allowAutoWidth) {
   value = (String(value)).toLowerCase();
   switch (value) {
     case 'no':
@@ -1380,6 +1383,9 @@ anychart.enums.normalizeLabelsOverlapMode = function(value, opt_default) {
     case 'true':
     case '1':
       return anychart.enums.LabelsOverlapMode.ALLOW_OVERLAP;
+    case 'autowidth':
+      if (opt_allowAutoWidth)
+        return anychart.enums.LabelsOverlapMode.AUTO_WIDTH;
   }
   return opt_default || anychart.enums.LabelsOverlapMode.ALLOW_OVERLAP;
 };
@@ -2909,7 +2915,11 @@ anychart.enums.normalizeRadarSeriesType = function(value, opt_default) {
 anychart.enums.PolarSeriesType = {
   AREA: 'area',
   LINE: 'line',
-  MARKER: 'marker'
+  MARKER: 'marker',
+  POLYGON: 'polygon',
+  POLYLINE: 'polyline',
+  COLUMN: 'column',
+  RANGE_COLUMN: 'rangeColumn'
 };
 
 
@@ -2926,8 +2936,16 @@ anychart.enums.normalizePolarSeriesType = function(value, opt_default) {
       return anychart.enums.PolarSeriesType.AREA;
     case 'line':
       return anychart.enums.PolarSeriesType.LINE;
+    case 'polygon':
+      return anychart.enums.PolarSeriesType.POLYGON;
+    case 'polyline':
+      return anychart.enums.PolarSeriesType.POLYLINE;
     case 'marker':
       return anychart.enums.PolarSeriesType.MARKER;
+    case 'column':
+      return anychart.enums.PolarSeriesType.COLUMN;
+    case 'rangecolumn':
+      return anychart.enums.PolarSeriesType.RANGE_COLUMN;
   }
   return opt_default || anychart.enums.PolarSeriesType.LINE;
 };
@@ -5426,6 +5444,22 @@ anychart.enums.Statistics = {
 };
 
 
+/**
+ * Statistics enums lower case representation.
+ * NOTE: for internal usage only.
+ * @type {Object.<anychart.enums.Statistics>}
+ */
+anychart.enums.StatisticsLowerCase = {};
+
+
+(function() {
+  for (var key in anychart.enums.Statistics) {
+    if (anychart.enums.Statistics.hasOwnProperty(key))
+      anychart.enums.StatisticsLowerCase[key] = anychart.enums.Statistics[key].toLowerCase();
+  }
+}());
+
+
 //region General series related enums
 //----------------------------------------------------------------------------------------------------------------------
 //
@@ -5468,7 +5502,15 @@ anychart.enums.SeriesDrawerTypes = {
   STEP_AREA: 17,
   STEP_LINE: 18,
   JUMP_LINE: 19,
-  STICK: 20
+  STICK: 20,
+  CONNECTOR: 21,
+  MAP_MARKER: 22,
+  MAP_BUBBLE: 23,
+  CHOROPLETH: 24,
+  POLAR_LINE: 25,
+  POLAR_AREA: 26,
+  POLAR_COLUMN: 27,
+  POLAR_RANGE_COLUMN: 28
 };
 
 
@@ -5490,7 +5532,8 @@ anychart.enums.ShapeType = {
   PATH: 'path',
   CIRCLE: 'circle',
   RECT: 'rect',
-  ELLIPSE: 'ellipse'
+  ELLIPSE: 'ellipse',
+  NONE: 'none'
 };
 
 
@@ -5511,7 +5554,9 @@ anychart.enums.ColorType = {
  */
 anychart.enums.PropertyHandlerType = {
   SINGLE_ARG: 0,
-  MULTI_ARG: 1
+  MULTI_ARG: 1,
+  SINGLE_ARG_DEPRECATED: 2,
+  MULTI_ARG_DEPRECATED: 3
 };
 //endregion
 
@@ -6329,10 +6374,11 @@ goog.exportSymbol('anychart.enums.StepDirection.CENTER', anychart.enums.StepDire
 goog.exportSymbol('anychart.enums.StepDirection.FORWARD', anychart.enums.StepDirection.FORWARD);
 goog.exportSymbol('anychart.enums.StepDirection.BACKWARD', anychart.enums.StepDirection.BACKWARD);
 
-goog.exportSymbol('anychart.enums.TokenType.UNKNOWN', anychart.enums.TokenType.UNKNOWN);
-goog.exportSymbol('anychart.enums.TokenType.NUMBER', anychart.enums.TokenType.NUMBER);
-goog.exportSymbol('anychart.enums.TokenType.STRING', anychart.enums.TokenType.STRING);
-goog.exportSymbol('anychart.enums.TokenType.DATE_TIME', anychart.enums.TokenType.DATE_TIME);
+goog.exportSymbol('anychart.enums.TokenType.UNKNOWN', anychart.enums.TokenType.UNKNOWN); //@deprecated Since 7.13.1. Don't use it at all.
+goog.exportSymbol('anychart.enums.TokenType.NUMBER', anychart.enums.TokenType.NUMBER); //@deprecated Since 7.13.1. Don't use it at all.
+goog.exportSymbol('anychart.enums.TokenType.STRING', anychart.enums.TokenType.STRING); //@deprecated Since 7.13.1. Don't use it at all.
+goog.exportSymbol('anychart.enums.TokenType.DATE_TIME', anychart.enums.TokenType.DATE_TIME); //@deprecated Since 7.13.1. Don't use it at all.
+goog.exportSymbol('anychart.enums.TokenType.PERCENT', anychart.enums.TokenType.PERCENT); //@deprecated Since 7.13.1. Don't use it at all.
 
 //goog.exportSymbol('anychart.enums.StringToken.AXIS_AVERAGE', anychart.enums.StringToken.AXIS_AVERAGE);
 //goog.exportSymbol('anychart.enums.StringToken.AXIS_BUBBLE_SIZE_MAX', anychart.enums.StringToken.AXIS_BUBBLE_SIZE_MAX);
@@ -6680,6 +6726,10 @@ goog.exportSymbol('anychart.enums.RadarSeriesType.MARKER', anychart.enums.RadarS
 goog.exportSymbol('anychart.enums.PolarSeriesType.AREA', anychart.enums.PolarSeriesType.AREA);
 goog.exportSymbol('anychart.enums.PolarSeriesType.LINE', anychart.enums.PolarSeriesType.LINE);
 goog.exportSymbol('anychart.enums.PolarSeriesType.MARKER', anychart.enums.PolarSeriesType.MARKER);
+goog.exportSymbol('anychart.enums.PolarSeriesType.POLYGON', anychart.enums.PolarSeriesType.POLYGON);
+goog.exportSymbol('anychart.enums.PolarSeriesType.POLYLINE', anychart.enums.PolarSeriesType.POLYLINE);
+goog.exportSymbol('anychart.enums.PolarSeriesType.COLUMN', anychart.enums.PolarSeriesType.COLUMN);
+goog.exportSymbol('anychart.enums.PolarSeriesType.RANGE_COLUMN', anychart.enums.PolarSeriesType.RANGE_COLUMN);
 
 goog.exportSymbol('anychart.enums.MilestoneShape.CIRCLE', anychart.enums.MilestoneShape.CIRCLE);
 goog.exportSymbol('anychart.enums.MilestoneShape.RHOMBUS', anychart.enums.MilestoneShape.RHOMBUS);
@@ -6783,7 +6833,6 @@ goog.exportSymbol('anychart.enums.TimeTrackingMode.AVAILABILITY_PER_CHART', anyc
 goog.exportSymbol('anychart.enums.TimeTrackingMode.AVAILABILITY_PER_RESOURCE', anychart.enums.TimeTrackingMode.AVAILABILITY_PER_RESOURCE);
 goog.exportSymbol('anychart.enums.TimeTrackingMode.ACTIVITY_PER_CHART', anychart.enums.TimeTrackingMode.ACTIVITY_PER_CHART);
 goog.exportSymbol('anychart.enums.TimeTrackingMode.ACTIVITY_PER_RESOURCE', anychart.enums.TimeTrackingMode.ACTIVITY_PER_RESOURCE);
-
 
 goog.exportSymbol('anychart.enums.ShapeType.PATH', anychart.enums.ShapeType.PATH);
 goog.exportSymbol('anychart.enums.ShapeType.CIRCLE', anychart.enums.ShapeType.CIRCLE);

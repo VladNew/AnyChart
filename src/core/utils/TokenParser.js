@@ -134,10 +134,10 @@ anychart.core.utils.TokenParser.parse = function(format) {
   }
 
   function tokenTerm(token, params, provider) {
-    var value = provider['getTokenValue'](token);
+    var value = provider.getTokenValueInternal(token);
     if (!goog.isDef(value))
       return '';
-    var type = provider['getTokenType'](token);
+    var type = provider.getTokenTypeInternal(token);
     switch (type) {
       case anychart.enums.TokenType.UNKNOWN:
         return '';
@@ -359,7 +359,7 @@ anychart.core.utils.TokenParser.parse = function(format) {
  * @param {string} str Format string.
  * @return {Function} Text formatter function.
  */
-anychart.core.utils.TokenParser.prototype.getTextFormatter = function(str) {
+anychart.core.utils.TokenParser.prototype.getFormat = function(str) {
   if (!this.cache_[str]) {
     var terms = anychart.core.utils.TokenParser.parse(str);
     this.cache_[str] = function(provider) {

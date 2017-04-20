@@ -236,7 +236,7 @@ anychart.core.pert.PertVisualElements.prototype.selectFill = function(opt_fillOr
 /**
  * Gets final fill.
  * @param {anychart.PointState|number} state - Current state.
- * @param {anychart.core.utils.PertPointContextProvider} provider - Context provider.
+ * @param {anychart.format.Context} provider - Context provider.
  * @return {!acgraph.vector.Fill} - Final fill.
  */
 anychart.core.pert.PertVisualElements.prototype.getFinalFill = function(state, provider) {
@@ -343,7 +343,7 @@ anychart.core.pert.PertVisualElements.prototype.selectStroke = function(opt_stro
 /**
  * Gets final stroke.
  * @param {anychart.PointState|number} state - Current state.
- * @param {anychart.core.utils.PertPointContextProvider} provider - Context provider.
+ * @param {anychart.format.Context} provider - Context provider.
  * @return {!acgraph.vector.Stroke} - Final stroke.
  */
 anychart.core.pert.PertVisualElements.prototype.getFinalStroke = function(state, provider) {
@@ -454,7 +454,7 @@ anychart.core.pert.PertVisualElements.prototype.labelsInvalidated = function(eve
  */
 anychart.core.pert.PertVisualElements.prototype.tooltip = function(opt_value) {
   if (!this.tooltip_) {
-    this.tooltip_ = new anychart.core.ui.Tooltip(anychart.core.ui.Tooltip.Capabilities.SUPPORTS_ALLOW_LEAVE_SCREEN);
+    this.tooltip_ = new anychart.core.ui.Tooltip(0);
     this.registerDisposable(this.tooltip_);
     this.tooltip_.listenSignals(this.onTooltipSignal_, this);
   }
@@ -483,12 +483,12 @@ anychart.core.pert.PertVisualElements.prototype.onTooltipSignal_ = function(even
  */
 anychart.core.pert.PertVisualElements.prototype.getCurrentTooltipConfig = function() {
   var config = this.tooltip().serialize();
-  var titleFormatter = this.tooltip().getOption('titleFormatter');
-  var textFormatter = this.tooltip().getOption('textFormatter');
-  if (titleFormatter && titleFormatter != anychart.utils.DEFAULT_FORMATTER)
-    config['titleFormatter'] = titleFormatter;
-  if (textFormatter && textFormatter != anychart.utils.DEFAULT_FORMATTER)
-    config['textFormatter'] = textFormatter;
+  var titleFormat = this.tooltip().getOption('titleFormat');
+  var format = this.tooltip().getOption('format');
+  if (titleFormat && titleFormat != anychart.utils.DEFAULT_FORMATTER)
+    config['titleFormat'] = titleFormat;
+  if (format && format != anychart.utils.DEFAULT_FORMATTER)
+    config['format'] = format;
   return config;
 };
 
@@ -673,9 +673,9 @@ anychart.core.pert.PertVisualElements.prototype.setupByJSON = function(config, o
   this.hoverStroke(config['hoverStroke']);
   this.selectStroke(config['selectStroke']);
 
-  this.labels(config['labels']);
-  this.selectLabels(config['selectLabels']);
-  this.hoverLabels(config['hoverLabels']);
+  this.labels().setupByVal(config['labels'], opt_default);
+  this.hoverLabels().setupByVal(config['hoverLabels'], opt_default);
+  this.selectLabels().setupByVal(config['selectLabels'], opt_default);
 
   if ('tooltip' in config)
     this.tooltip().setupByVal(config['tooltip'], opt_default);

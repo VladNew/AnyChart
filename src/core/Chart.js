@@ -6,6 +6,7 @@
 goog.provide('anychart.core.Chart');
 
 goog.require('acgraph');
+goog.require('anychart.compatibility');
 goog.require('anychart.core.VisualBaseWithBounds');
 goog.require('anychart.core.reporting');
 goog.require('anychart.core.ui.Background');
@@ -16,12 +17,12 @@ goog.require('anychart.core.ui.Title');
 goog.require('anychart.core.ui.Tooltip');
 goog.require('anychart.core.utils.Animation');
 goog.require('anychart.core.utils.ChartA11y');
-goog.require('anychart.core.utils.ChartContextProvider');
 goog.require('anychart.core.utils.Interactivity');
 goog.require('anychart.core.utils.InteractivityState');
 goog.require('anychart.core.utils.Margin');
 goog.require('anychart.core.utils.Padding');
 goog.require('anychart.exports');
+goog.require('anychart.format.Context');
 goog.require('anychart.performance');
 goog.require('anychart.themes.merging');
 goog.require('anychart.utils');
@@ -107,7 +108,7 @@ anychart.core.Chart = function() {
 
   /**
    * Chart context provider.
-   * @type {anychart.core.utils.ChartContextProvider}
+   * @type {anychart.format.Context}
    * @private
    */
   this.chartContextProvider_ = null;
@@ -143,8 +144,9 @@ anychart.core.Chart = function() {
   /**
    * Statistics object.
    * @type {Object}
+   * @private
    */
-  this.statistics = {};
+  this.statistics_ = {};
 
   /**
    * @type {anychart.core.ui.ChartCredits}
@@ -537,13 +539,43 @@ anychart.core.Chart.prototype.ensureStatisticsReady = function() {
 
 
 /**
+ * Chart statistics getter/setter for internal usage. Turns names to lower case and asks values as lower case.
+ * @param {string=} opt_name Statistics parameter name.
+ * @param {*=} opt_value Statistics parameter value.
+ * @return {anychart.core.Chart|*}
+ */
+anychart.core.Chart.prototype.statistics = function(opt_name, opt_value) {
+  if (goog.isDef(opt_name)) {
+    if (goog.isDef(opt_value)) {
+      this.statistics_[opt_name.toLowerCase()] = opt_value;
+      return this;
+    } else {
+      return this.statistics_[opt_name.toLowerCase()];
+    }
+  } else {
+    return this.statistics_;
+  }
+};
+
+
+/**
+ * Resets statistics
+ * @return {anychart.core.Chart} - Itself.
+ */
+anychart.core.Chart.prototype.resetStatistics = function() {
+  this.statistics_ = {};
+  return this;
+};
+
+
+/**
  * Gets statistics value by key.
  * @param {string} key - Key.
  * @return {*} - Statistics value.
  */
 anychart.core.Chart.prototype.getStat = function(key) {
   this.ensureStatisticsReady();
-  return this.statistics[key];
+  return this.statistics(key);
 };
 
 
@@ -1167,13 +1199,21 @@ anychart.core.Chart.prototype.doAnimation = goog.nullFunction;
 //----------------------------------------------------------------------------------------------------------------------
 /**
  * Creates tooltip context provider.
- * @return {!anychart.core.utils.ChartContextProvider}
+ * @return {anychart.format.Context}
  */
 anychart.core.Chart.prototype.createChartContextProvider = function() {
   if (!this.chartContextProvider_) {
-    this.chartContextProvider_ = new anychart.core.utils.ChartContextProvider(this);
+    this.chartContextProvider_ = new anychart.format.Context();
   }
-  return this.chartContextProvider_;
+
+  var values = {
+    'chart': {value: this, type: anychart.enums.TokenType.UNKNOWN}
+  };
+
+  this.chartContextProvider_
+      .statisticsSources([this]);
+
+  return /** @type {anychart.format.Context} */ (this.chartContextProvider_.propagate(values));
 };
 
 
@@ -1221,6 +1261,9 @@ anychart.core.Chart.prototype.drawInternal = function() {
   if (!this.checkDrawingNeeded())
     return;
 
+  if (anychart.compatibility.IS_PHANTOM_JS && this.container() && this.container().getStage())
+    this.container().getStage().getTooltipLayer();
+
   anychart.performance.start('Chart.draw()');
   var startTime;
   if (anychart.DEVELOP) {
@@ -1256,6 +1299,7 @@ anychart.core.Chart.prototype.drawInternal = function() {
       this.rootElement.parent(/** @type {acgraph.vector.ILayer} */(this.container()));
     }
 
+    this.tooltip().containerProvider(this);
     this.markConsistent(anychart.ConsistencyState.CONTAINER);
   }
 
@@ -1322,7 +1366,7 @@ anychart.core.Chart.prototype.drawInternal = function() {
   this.markConsistent(anychart.ConsistencyState.CHART_ANIMATION);
 
   if (this.hasInvalidationState(anychart.ConsistencyState.A11Y)) {
-    this.a11y().applyA11y(this.createChartContextProvider());
+    this.a11y().applyA11y();
     this.markConsistent(anychart.ConsistencyState.A11Y);
   }
 
@@ -2133,14 +2177,19 @@ anychart.core.Chart.prototype.onMouseDown = function(event) {
 
   var tag = anychart.utils.extractTag(event['domTarget']);
 
-  var isTargetLegendOrColorRange = event['target'] instanceof anychart.core.ui.Legend || this.checkIfColorRange(event['target']);
+  var isColorRange = this.checkIfColorRange(event['target']);
+  var isLegend = event['target'] instanceof anychart.core.ui.Legend;
+  var isLabelsFactory = event['target'] instanceof anychart.core.ui.LabelsFactory;
+  var isMarkersFactory = event['target'] instanceof anychart.core.ui.MarkersFactory;
+  var isTargetLegendOrColorRange = isLegend || isColorRange;
 
   var series, s, index;
   if (isTargetLegendOrColorRange) {
     if (tag) {
-      if (tag.points_) {
-        series = tag.points_.series;
-        index = tag.points_.points;
+      points = tag.points_ || tag.points;
+      if (points) {
+        series = points.series;
+        index = points.points;
       } else {
         // I don't understand, why it is like this here.
         //series = tag.series_;
@@ -2149,20 +2198,21 @@ anychart.core.Chart.prototype.onMouseDown = function(event) {
         index = tag.index;
       }
     }
-  } else if (event['target'] instanceof anychart.core.ui.LabelsFactory || event['target'] instanceof anychart.core.ui.MarkersFactory) {
+  } else if (isLabelsFactory || isMarkersFactory) {
     var parent = event['target'].getParentEventTarget();
     if (parent.isSeries && parent.isSeries())
       series = parent;
     index = tag;
   } else {
     series = tag && tag.series;
-    index = goog.isNumber(tag.index) ? tag.index : event['pointIndex'];
+    index = tag && goog.isNumber(tag.index) ? tag.index : event['pointIndex'];
   }
 
   if (series && !series.isDisposed() && series.enabled() && goog.isFunction(series.makePointEvent)) {
     var evt = series.makePointEvent(event);
     if (evt && ((anychart.utils.checkIfParent(/** @type {!goog.events.EventTarget} */(series), event['relatedTarget'])) || series.dispatchEvent(evt))) {
-      index = evt['pointIndex'];
+      if (!isColorRange)
+        index = evt['pointIndex'];
       if (interactivity.hoverMode() == anychart.enums.HoverMode.SINGLE) {
         if (interactivity.selectionMode() == anychart.enums.SelectionMode.NONE || series.selectionMode() == anychart.enums.SelectionMode.NONE)
           return;
